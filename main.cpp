@@ -1,4 +1,4 @@
-// SimplePaint - A photo editor between Paint and Photoshop
+// PixelPlacer - A photo editor between Paint and Photoshop
 // Implemented in minimal, readable C++ with automatic memory management
 // Pure software rendering, no GPU required
 
@@ -7,7 +7,7 @@
 int main(int argc, char* argv[]) {
     // Create and run application
     Application app;
-    if (!app.initialize(1280, 800, "SimplePaint")) {
+    if (!app.initialize(0, 0, "PixelPlacer")) {  // 0,0 = auto-size to half screen
         return 1;
     }
 
@@ -45,7 +45,9 @@ int main(int argc, char* argv[]) {
 #include "layouts.cpp"
 #include "basic_widgets.cpp"
 #include "panels.cpp"
+#include "overlay_manager.cpp"
 #include "dialogs.cpp"
+#include "brush_dialogs.cpp"
 #include "main_window.cpp"
 #include "framebuffer.cpp"
 #include "sampler.cpp"

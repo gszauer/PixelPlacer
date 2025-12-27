@@ -140,32 +140,19 @@ struct AppState {
     // Deferred file dialog (for Linux X11 mouse grab workaround)
     PendingFileDialog pendingFileDialog;
 
-    void requestOpenFileDialog(const std::string& title, const std::string& filters,
-                               std::function<void(const std::string&)> callback) {
-        pendingFileDialog.active = true;
-        pendingFileDialog.isSaveDialog = false;
-        pendingFileDialog.title = title;
-        pendingFileDialog.defaultName = "";
-        pendingFileDialog.filters = filters;
-        pendingFileDialog.callback = callback;
-    }
+    // Deferred UI scale change (to avoid destroying widgets during click handlers)
+    bool pendingScaleChange = false;
+    f32 pendingScaleValue = 1.0f;
 
+    void requestScaleChange(f32 newScale);
+    void requestOpenFileDialog(const std::string& title, const std::string& filters,
+                               std::function<void(const std::string&)> callback);
     void requestSaveFileDialog(const std::string& title, const std::string& defaultName,
                                const std::string& filters,
-                               std::function<void(const std::string&)> callback) {
-        pendingFileDialog.active = true;
-        pendingFileDialog.isSaveDialog = true;
-        pendingFileDialog.title = title;
-        pendingFileDialog.defaultName = defaultName;
-        pendingFileDialog.filters = filters;
-        pendingFileDialog.callback = callback;
-    }
-
+                               std::function<void(const std::string&)> callback);
     // Legacy method for compatibility
     void requestFileDialog(const std::string& title, const std::string& filters,
-                           std::function<void(const std::string&)> callback) {
-        requestOpenFileDialog(title, filters, callback);
-    }
+                           std::function<void(const std::string&)> callback);
 
     // Document management
     Document* createDocument(u32 width, u32 height, const std::string& name = "Untitled");
@@ -178,14 +165,8 @@ struct AppState {
     std::function<void()> onActiveDocumentChanged;
 
     // Color swapping
-    void swapColors() {
-        std::swap(foregroundColor, backgroundColor);
-    }
-
-    void resetColors() {
-        foregroundColor = Color::black();
-        backgroundColor = Color::white();
-    }
+    void swapColors();
+    void resetColors();
 };
 
 // Global state accessor
@@ -194,47 +175,6 @@ AppState& getAppState();
 // Evaluate cubic bezier pressure curve
 // Input: raw pressure (0-1), control points
 // Output: adjusted pressure (0-1)
-inline f32 evaluatePressureCurve(f32 inputPressure, Vec2 cp1, Vec2 cp2) {
-    // Fixed endpoints: P0=(0,0), P3=(1,1)
-    // Control points: P1=cp1, P2=cp2
-    // We need to find Y given X (the input pressure)
-    // Use binary search to find t where bezierX(t) ≈ inputPressure
-
-    f32 t = inputPressure;  // Initial guess
-
-    // Binary search for t
-    f32 low = 0.0f, high = 1.0f;
-    for (int i = 0; i < 10; ++i) {  // 10 iterations gives ~0.001 precision
-        t = (low + high) * 0.5f;
-
-        // Calculate bezier X at t
-        f32 mt = 1.0f - t;
-        f32 mt2 = mt * mt;
-        f32 mt3 = mt2 * mt;
-        f32 t2 = t * t;
-        f32 t3 = t2 * t;
-
-        // X = (1-t)³*0 + 3(1-t)²t*cp1.x + 3(1-t)t²*cp2.x + t³*1
-        f32 x = 3.0f * mt2 * t * cp1.x + 3.0f * mt * t2 * cp2.x + t3;
-
-        if (x < inputPressure) {
-            low = t;
-        } else {
-            high = t;
-        }
-    }
-
-    // Now calculate Y at the found t
-    f32 mt = 1.0f - t;
-    f32 mt2 = mt * mt;
-    f32 mt3 = mt2 * mt;
-    f32 t2 = t * t;
-    f32 t3 = t2 * t;
-
-    // Y = (1-t)³*0 + 3(1-t)²t*cp1.y + 3(1-t)t²*cp2.y + t³*1
-    f32 y = 3.0f * mt2 * t * cp1.y + 3.0f * mt * t2 * cp2.y + t3;
-
-    return std::max(0.0f, std::min(1.0f, y));
-}
+f32 evaluatePressureCurve(f32 inputPressure, Vec2 cp1, Vec2 cp2);
 
 #endif

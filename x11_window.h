@@ -85,6 +85,9 @@ struct X11Window : public PlatformWindow {
     u32 getWidth() const override { return width; }
     u32 getHeight() const override { return height; }
     f32 getDpiScale() const override { return dpiScale; }
+    void getScreenSize(u32& outWidth, u32& outHeight) const override;
+    void setMinSize(u32 minW, u32 minH) override;
+    void centerOnScreen() override;
 
     // Window decorations and controls
     void setDecorated(bool decorated) override;

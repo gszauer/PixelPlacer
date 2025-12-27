@@ -12,6 +12,7 @@ Application::~Application() = default;
 
 bool Application::initialize(u32 width, u32 height, const char* title) {
     // Create platform window
+    // Pass 0,0 for auto-sizing (half screen, min 1280x800, centered)
     window = Platform::createWindow();
     if (!window || !window->create(width, height, title)) {
         fprintf(stderr, "Failed to create window\n");
@@ -21,16 +22,14 @@ bool Application::initialize(u32 width, u32 height, const char* title) {
     // Remove system decorations - we render our own title bar
     window->setDecorated(false);
 
-    windowWidth = width;
-    windowHeight = height;
+    // Get actual window size (may have been auto-calculated)
+    windowWidth = window->getWidth();
+    windowHeight = window->getHeight();
 
     // Get DPI scale from platform window
     dpiScale = window->getDpiScale();
-    drawableWidth = width;
-    drawableHeight = height;
-
-    fprintf(stderr, "Window: %dx%d, Drawable: %dx%d, DPI Scale: %.2f\n",
-            windowWidth, windowHeight, drawableWidth, drawableHeight, dpiScale);
+    drawableWidth = windowWidth;
+    drawableHeight = windowHeight;
 
     framebuffer.resize(drawableWidth, drawableHeight);
 
@@ -152,10 +151,10 @@ void Application::createMainWindow() {
     mainWindow->setBounds(0, 0, drawableWidth, drawableHeight);
     mainWindow->layout();
 
-    // Connect UI scale change callback
+    // Connect UI scale change callback (deferred to avoid destroying widgets during click)
     if (mainWindow->statusBar) {
-        mainWindow->statusBar->onScaleChanged = [this](f32 newScale) {
-            rebuildUIWithScale(newScale);
+        mainWindow->statusBar->onScaleChanged = [](f32 newScale) {
+            getAppState().requestScaleChange(newScale);
         };
     }
 
@@ -251,6 +250,12 @@ void Application::run() {
                 state.pendingFileDialog.callback(path);
             }
             state.needsRedraw = true;
+        }
+
+        // Process deferred UI scale change (must be outside event handling to avoid use-after-free)
+        if (state.pendingScaleChange) {
+            state.pendingScaleChange = false;
+            rebuildUIWithScale(state.pendingScaleValue);
         }
 
         // Force redraw if there's an active selection (for marching ants animation)

@@ -21,6 +21,9 @@ struct PlatformWindow {
     virtual u32 getWidth() const = 0;
     virtual u32 getHeight() const = 0;
     virtual f32 getDpiScale() const = 0;
+    virtual void getScreenSize(u32& outWidth, u32& outHeight) const = 0;
+    virtual void setMinSize(u32 minW, u32 minH) = 0;
+    virtual void centerOnScreen() = 0;
 
     // Window decorations and controls
     virtual void setDecorated(bool decorated) = 0;

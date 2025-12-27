@@ -92,16 +92,22 @@ public:
 class Button : public Widget {
 public:
     std::string text;
-    u32 normalColor = Config::COLOR_PANEL;
-    u32 hoverColor = Config::COLOR_HOVER;
-    u32 pressedColor = Config::COLOR_ACTIVE;
+    u32 normalColor = Config::COLOR_BUTTON;
+    u32 hoverColor = Config::COLOR_BUTTON_HOVER;
+    u32 pressedColor = Config::COLOR_BUTTON_PRESSED;
     u32 textColor = Config::COLOR_TEXT;
-    u32 borderColor = Config::COLOR_BORDER;
+    u32 borderColor = 0x00000000;  // No border by default (Spectrum style)
     f32 fontSize = Config::defaultFontSize();
+    i32 textAlign = 1;  // 0=left, 1=center, 2=right
 
     bool pressed = false;
 
     std::function<void()> onClick;
+    std::function<void()> onDoubleClick;
+
+    // For double-click detection
+    u64 lastClickTime = 0;
+    static constexpr u64 DOUBLE_CLICK_TIME = 400;  // ms
 
     Button() {
         preferredSize = Vec2(80 * Config::uiScale, 24 * Config::uiScale);
@@ -121,9 +127,9 @@ class IconButton : public Widget {
 public:
     u32 iconColor = Config::COLOR_TEXT;
     u32 normalColor = 0x00000000;  // Transparent by default
-    u32 hoverColor = Config::COLOR_HOVER;
-    u32 pressedColor = Config::COLOR_ACTIVE;
-    u32 selectedColor = Config::COLOR_ACCENT;
+    u32 hoverColor = Config::COLOR_BUTTON_HOVER;
+    u32 pressedColor = Config::COLOR_BUTTON_PRESSED;
+    u32 selectedColor = Config::GRAY_500;
 
     bool pressed = false;
     bool selected = false;
@@ -154,8 +160,8 @@ class Checkbox : public Widget {
 public:
     std::string label;
     bool checked = false;
-    u32 boxColor = Config::COLOR_PANEL;
-    u32 checkColor = Config::COLOR_ACCENT;
+    u32 boxColor = Config::COLOR_INPUT;  // Dark inset for checkbox box
+    u32 checkColor = Config::GRAY_700;   // Muted gray check mark
     u32 textColor = Config::COLOR_TEXT;
 
     std::function<void(bool)> onChanged;
@@ -179,9 +185,9 @@ public:
     f32 minValue = 0.0f;
     f32 maxValue = 1.0f;
 
-    u32 trackColor = Config::COLOR_BACKGROUND;
-    u32 fillColor = Config::COLOR_ACCENT;
-    u32 thumbColor = Config::COLOR_TEXT;
+    u32 trackColor = Config::COLOR_INPUT;  // Dark inset track
+    u32 fillColor = Config::GRAY_500;     // Visible against dark track
+    u32 thumbColor = Config::GRAY_600;    // Slightly lighter knob
 
     bool dragging = false;
 
@@ -221,11 +227,11 @@ class TextField : public Widget {
 public:
     std::string text;
     std::string placeholder;
-    u32 bgColor = Config::COLOR_BACKGROUND;
+    u32 bgColor = Config::COLOR_INPUT;  // Dark inset (Spectrum style)
     u32 textColor = Config::COLOR_TEXT;
     u32 placeholderColor = Config::COLOR_TEXT_DIM;
     u32 borderColor = Config::COLOR_BORDER;
-    u32 focusBorderColor = Config::COLOR_ACCENT;
+    u32 focusBorderColor = Config::COLOR_FOCUS;
     f32 fontSize = Config::defaultFontSize();
 
     i32 cursorPos = 0;
@@ -297,7 +303,7 @@ public:
     u32 bgColor = Config::COLOR_PANEL;
     u32 textColor = Config::COLOR_TEXT;
     u32 borderColor = Config::COLOR_BORDER;
-    u32 hoverColor = Config::COLOR_ACCENT;
+    u32 hoverColor = Config::GRAY_500;
 
     ComboBoxDropdown() {
         visible = false;
@@ -318,7 +324,7 @@ public:
     u32 bgColor = Config::COLOR_PANEL;
     u32 textColor = Config::COLOR_TEXT;
     u32 borderColor = Config::COLOR_BORDER;
-    u32 hoverColor = Config::COLOR_ACCENT;
+    u32 hoverColor = Config::GRAY_500;
 
     std::function<void(i32)> onSelectionChanged;
 
@@ -428,7 +434,7 @@ public:
     std::vector<MenuItem> items;
     i32 hoveredIndex = -1;
     u32 bgColor = Config::COLOR_PANEL;
-    u32 hoverColor = Config::COLOR_ACCENT;
+    u32 hoverColor = Config::GRAY_500;
     u32 textColor = Config::COLOR_TEXT;
     u32 disabledColor = Config::COLOR_TEXT_DIM;
     u32 borderColor = Config::COLOR_BORDER;

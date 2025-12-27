@@ -482,7 +482,19 @@ void FontRenderer::renderIconCentered(Framebuffer& fb, const std::string& icon, 
 void Label::renderSelf(Framebuffer& fb) {
     Rect global = globalBounds();
 
-    Vec2 textSize = FontRenderer::instance().measureText(text, fontSize);
+    // Truncate text if too wide
+    f32 maxTextWidth = global.w - 8 * Config::uiScale;  // 4px padding on each side
+    std::string displayText = text;
+    Vec2 textSize = FontRenderer::instance().measureText(displayText, fontSize);
+
+    if (textSize.x > maxTextWidth && displayText.length() > 3) {
+        // Truncate with ellipsis
+        while (textSize.x > maxTextWidth && displayText.length() > 3) {
+            displayText = displayText.substr(0, displayText.length() - 4) + "...";
+            textSize = FontRenderer::instance().measureText(displayText, fontSize);
+        }
+    }
+
     f32 tx = global.x + 4 * Config::uiScale;
     f32 ty = global.y;
 
@@ -495,7 +507,7 @@ void Label::renderSelf(Framebuffer& fb) {
 
     // Use dimmed color when disabled
     u32 actualTextColor = enabled ? textColor : Config::COLOR_TEXT_DIM;
-    FontRenderer::instance().renderText(fb, text, static_cast<i32>(tx), static_cast<i32>(ty), actualTextColor, fontSize);
+    FontRenderer::instance().renderText(fb, displayText, static_cast<i32>(tx), static_cast<i32>(ty), actualTextColor, fontSize);
 }
 
 // Button implementation
@@ -523,7 +535,14 @@ void Button::renderSelf(Framebuffer& fb) {
         }
     }
 
-    f32 tx = global.x + (global.w - textSize.x) / 2;
+    f32 tx;
+    if (textAlign == 0) {  // Left
+        tx = global.x + 4;
+    } else if (textAlign == 2) {  // Right
+        tx = global.x + global.w - textSize.x - 4;
+    } else {  // Center (default)
+        tx = global.x + (global.w - textSize.x) / 2;
+    }
     f32 ty = global.y + (global.h - textSize.y) / 2;
 
     // Use dimmed color when disabled
@@ -543,8 +562,16 @@ bool Button::onMouseDown(const MouseEvent& e) {
 bool Button::onMouseUp(const MouseEvent& e) {
     if (pressed && e.button == MouseButton::Left) {
         pressed = false;
-        if (bounds.containsLocal(e.position) && onClick) {
-            onClick();
+        if (bounds.containsLocal(e.position)) {
+            // Check for double-click
+            u64 currentTime = Platform::getMilliseconds();
+            if (onDoubleClick && (currentTime - lastClickTime) < DOUBLE_CLICK_TIME) {
+                onDoubleClick();
+                lastClickTime = 0;  // Reset to prevent triple-click triggering
+            } else {
+                if (onClick) onClick();
+                lastClickTime = currentTime;
+            }
         }
         return true;
     }
@@ -765,7 +792,7 @@ void TextField::renderSelf(Framebuffer& fb) {
 
         if (highlightX2 > highlightX1) {
             Recti selRect(highlightX1, highlightY, highlightX2 - highlightX1, highlightH);
-            fb.fillRect(selRect, Config::COLOR_ACCENT);
+            fb.fillRect(selRect, Config::GRAY_500);
         }
     }
 

@@ -1,6 +1,7 @@
 #include "x11_window.h"
 #include <X11/cursorfont.h>
 #include <X11/Xatom.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -19,6 +20,19 @@ bool X11Window::create(u32 w, u32 h, const char* title) {
 
     // Get DPI scale before creating window
     updateDpiScale();
+
+    // Auto-calculate window size if w or h is 0
+    // Use half of screen size, minimum 1280x800
+    if (w == 0 || h == 0) {
+        u32 screenW = static_cast<u32>(XDisplayWidth(display, screen));
+        u32 screenH = static_cast<u32>(XDisplayHeight(display, screen));
+        constexpr u32 MIN_WIDTH = 1280;
+        constexpr u32 MIN_HEIGHT = 800;
+        w = std::max(MIN_WIDTH, screenW / 2);
+        h = std::max(MIN_HEIGHT, screenH / 2);
+        fprintf(stderr, "Screen: %dx%d, Window: %dx%d, DPI Scale: %.2f\n",
+                screenW, screenH, w, h, dpiScale);
+    }
 
     // Create window
     Window root = RootWindow(display, screen);
@@ -70,6 +84,27 @@ bool X11Window::create(u32 w, u32 h, const char* title) {
     // Initialize drag and drop support
     initXdnd();
 
+    // Store dimensions
+    width = w;
+    height = h;
+
+    // Set minimum size (1280x800)
+    XSizeHints* hints = XAllocSizeHints();
+    if (hints) {
+        hints->flags = PMinSize;
+        hints->min_width = 1280;
+        hints->min_height = 800;
+        XSetWMNormalHints(display, window, hints);
+        XFree(hints);
+    }
+
+    // Center window on screen before mapping
+    u32 screenW = static_cast<u32>(XDisplayWidth(display, screen));
+    u32 screenH = static_cast<u32>(XDisplayHeight(display, screen));
+    i32 x = static_cast<i32>((screenW - w) / 2);
+    i32 y = static_cast<i32>((screenH - h) / 2);
+    XMoveWindow(display, window, x, y);
+
     // Map (show) window
     XMapWindow(display, window);
     XFlush(display);
@@ -81,16 +116,12 @@ bool X11Window::create(u32 w, u32 h, const char* title) {
         if (event.type == MapNotify) break;
     }
 
-    width = w;
-    height = h;
-
     // Create initial image buffer
     if (!createImageBuffer(w, h)) {
         destroy();
         return false;
     }
 
-    fprintf(stderr, "X11 Window: %dx%d, DPI Scale: %.2f\n", width, height, dpiScale);
     return true;
 }
 
@@ -134,7 +165,45 @@ void X11Window::resize(u32 w, u32 h) {
     if (display && window) {
         XResizeWindow(display, window, w, h);
         XFlush(display);
+        width = w;
+        height = h;
     }
+}
+
+void X11Window::getScreenSize(u32& outWidth, u32& outHeight) const {
+    if (display) {
+        outWidth = static_cast<u32>(XDisplayWidth(display, screen));
+        outHeight = static_cast<u32>(XDisplayHeight(display, screen));
+    } else {
+        outWidth = 1920;
+        outHeight = 1080;
+    }
+}
+
+void X11Window::setMinSize(u32 minW, u32 minH) {
+    if (!display || !window) return;
+
+    XSizeHints* hints = XAllocSizeHints();
+    if (hints) {
+        hints->flags = PMinSize;
+        hints->min_width = static_cast<int>(minW);
+        hints->min_height = static_cast<int>(minH);
+        XSetWMNormalHints(display, window, hints);
+        XFree(hints);
+    }
+}
+
+void X11Window::centerOnScreen() {
+    if (!display || !window) return;
+
+    u32 screenW = static_cast<u32>(XDisplayWidth(display, screen));
+    u32 screenH = static_cast<u32>(XDisplayHeight(display, screen));
+
+    i32 x = static_cast<i32>((screenW - width) / 2);
+    i32 y = static_cast<i32>((screenH - height) / 2);
+
+    XMoveWindow(display, window, x, y);
+    XFlush(display);
 }
 
 void X11Window::setDecorated(bool decor) {
