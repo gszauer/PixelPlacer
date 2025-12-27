@@ -1,6 +1,10 @@
 # PixelPlacer
 
-A raster graphics editor built in minimal C++ with automatic memory management. Built with Claude Code Max 4.5. I never read or reviewed any of this code.
+A raster graphics editor built in minimal C++ with automatic memory management. 
+
+![Screenshot](screenshot.png)
+
+Built with Claude Code Max 4.5. I never read or reviewed any of this code.
 
 ## Key Features
 
