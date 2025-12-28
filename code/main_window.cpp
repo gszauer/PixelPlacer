@@ -66,7 +66,7 @@ void DocumentViewWidget::renderSelf(Framebuffer& fb) {
 
         Tool* tool = view.document->getTool();
         bool showOverlay = tool && tool->hasOverlay() &&
-                          (mouseOverCanvas || tool->type == ToolType::Crop);
+                          (mouseOverCanvas || tool->type == ToolType::Crop || tool->type == ToolType::Move);
         if (showOverlay) {
             Vec2 cursorScreen = view.documentToScreen(lastMousePos);
             Recti clipRect(static_cast<i32>(global.x), static_cast<i32>(global.y),
@@ -853,14 +853,14 @@ bool WindowControlButton::onMouseUp(const MouseEvent& e) {
 // ============================================================================
 
 ResizeDivider::ResizeDivider() {
-    preferredSize = Vec2(3 * Config::uiScale, 0);
+    preferredSize = Vec2(5 * Config::uiScale, 0);
     horizontalPolicy = SizePolicy::Fixed;
     verticalPolicy = SizePolicy::Expanding;
 }
 
 void ResizeDivider::renderSelf(Framebuffer& fb) {
     Rect gb = globalBounds();
-    u32 color = (dragging || hovered) ? Config::GRAY_400 : Config::GRAY_50;
+    u32 color = (dragging || hovered) ? Config::COLOR_RESIZER_HOVER : Config::COLOR_RESIZER;
     Recti rect(static_cast<i32>(gb.x), static_cast<i32>(gb.y),
                static_cast<i32>(gb.w), static_cast<i32>(gb.h));
     fb.fillRect(rect, color);
@@ -916,14 +916,14 @@ void ResizeDivider::onMouseLeave(const MouseEvent& e) {
 // ============================================================================
 
 VPanelResizer::VPanelResizer() {
-    preferredSize = Vec2(0, 3 * Config::uiScale);
+    preferredSize = Vec2(0, 5 * Config::uiScale);
     horizontalPolicy = SizePolicy::Expanding;
     verticalPolicy = SizePolicy::Fixed;
 }
 
 void VPanelResizer::renderSelf(Framebuffer& fb) {
     Rect gb = globalBounds();
-    u32 color = (dragging || hovered) ? Config::GRAY_400 : Config::GRAY_50;
+    u32 color = (dragging || hovered) ? Config::COLOR_RESIZER_HOVER : Config::COLOR_RESIZER;
     Recti rect(static_cast<i32>(gb.x), static_cast<i32>(gb.y),
                static_cast<i32>(gb.w), static_cast<i32>(gb.h));
     fb.fillRect(rect, color);
@@ -1927,29 +1927,33 @@ void ToolOptionsBar::buildBrushOptions() {
 
     // Size
     addLabel("Size");
-    sizeSlider = addSlider(Config::MIN_BRUSH_SIZE, Config::MAX_BRUSH_SIZE, state.brushSize, 80);
+    sizeSlider = addNumberSlider(Config::MIN_BRUSH_SIZE, Config::MAX_BRUSH_SIZE, state.brushSize, 0, 50);
+    sizeSlider->suffix = "px";
     sizeSlider->onChanged = [](f32 value) { getAppState().brushSize = value; };
 
     addGroupSpacing();
 
     // Opacity
     addLabel("Opacity");
-    opacitySlider = addSlider(0.0f, 1.0f, state.brushOpacity, 60);
-    opacitySlider->onChanged = [](f32 value) { getAppState().brushOpacity = value; };
+    opacitySlider = addNumberSlider(0.0f, 100.0f, state.brushOpacity * 100.0f, 0, 45);
+    opacitySlider->suffix = "%";
+    opacitySlider->onChanged = [](f32 value) { getAppState().brushOpacity = value / 100.0f; };
 
     addGroupSpacing();
 
     // Flow
     addLabel("Flow");
-    auto* flowSlider = addSlider(0.0f, 1.0f, state.brushFlow, 60);
-    flowSlider->onChanged = [](f32 value) { getAppState().brushFlow = value; };
+    auto* flowSlider = addNumberSlider(0.0f, 100.0f, state.brushFlow * 100.0f, 0, 45);
+    flowSlider->suffix = "%";
+    flowSlider->onChanged = [](f32 value) { getAppState().brushFlow = value / 100.0f; };
 
     addGroupSpacing();
 
     // Hardness (only visible for round brush)
     hardnessLabel = addLabel("Hardness");
-    hardnessSlider = addSlider(0.0f, 1.0f, state.brushHardness, 60);
-    hardnessSlider->onChanged = [](f32 value) { getAppState().brushHardness = value; };
+    hardnessSlider = addNumberSlider(0.0f, 100.0f, state.brushHardness * 100.0f, 0, 45);
+    hardnessSlider->suffix = "%";
+    hardnessSlider->onChanged = [](f32 value) { getAppState().brushHardness = value / 100.0f; };
 
     // Hide hardness controls if custom tip is selected
     bool showHardness = state.currentBrushTipIndex < 0;
@@ -1973,7 +1977,7 @@ void ToolOptionsBar::buildBrushOptions() {
     curveBtn->onClick = [this]() {
         if (onOpenPressureCurvePopup) {
             Rect btnBounds = curveBtn->globalBounds();
-            onOpenPressureCurvePopup(btnBounds.x, btnBounds.bottom());
+            onOpenPressureCurvePopup(btnBounds.right(), btnBounds.bottom());
         }
     };
     curveBtn->visible = state.brushPressureMode != 0;
@@ -2005,29 +2009,33 @@ void ToolOptionsBar::buildEraserOptions() {
 
     // Size
     addLabel("Size");
-    sizeSlider = addSlider(Config::MIN_BRUSH_SIZE, Config::MAX_BRUSH_SIZE, state.brushSize, 80);
+    sizeSlider = addNumberSlider(Config::MIN_BRUSH_SIZE, Config::MAX_BRUSH_SIZE, state.brushSize, 0, 50);
+    sizeSlider->suffix = "px";
     sizeSlider->onChanged = [](f32 value) { getAppState().brushSize = value; };
 
     addGroupSpacing();
 
     // Hardness
     addLabel("Hard");
-    hardnessSlider = addSlider(0.0f, 1.0f, state.brushHardness, 60);
-    hardnessSlider->onChanged = [](f32 value) { getAppState().brushHardness = value; };
+    hardnessSlider = addNumberSlider(0.0f, 100.0f, state.brushHardness * 100.0f, 0, 45);
+    hardnessSlider->suffix = "%";
+    hardnessSlider->onChanged = [](f32 value) { getAppState().brushHardness = value / 100.0f; };
 
     addGroupSpacing();
 
     // Opacity
     addLabel("Opacity");
-    opacitySlider = addSlider(0.0f, 1.0f, state.brushOpacity, 60);
-    opacitySlider->onChanged = [](f32 value) { getAppState().brushOpacity = value; };
+    opacitySlider = addNumberSlider(0.0f, 100.0f, state.brushOpacity * 100.0f, 0, 45);
+    opacitySlider->suffix = "%";
+    opacitySlider->onChanged = [](f32 value) { getAppState().brushOpacity = value / 100.0f; };
 
     addGroupSpacing();
 
     // Flow
     addLabel("Flow");
-    auto* flowSlider = addSlider(0.0f, 1.0f, state.brushFlow, 60);
-    flowSlider->onChanged = [](f32 value) { getAppState().brushFlow = value; };
+    auto* flowSlider = addNumberSlider(0.0f, 100.0f, state.brushFlow * 100.0f, 0, 45);
+    flowSlider->suffix = "%";
+    flowSlider->onChanged = [](f32 value) { getAppState().brushFlow = value / 100.0f; };
 
     addGroupSpacing();
 
@@ -2046,7 +2054,7 @@ void ToolOptionsBar::buildEraserOptions() {
     curveBtn->onClick = [this]() {
         if (onOpenPressureCurvePopup) {
             Rect btnBounds = curveBtn->globalBounds();
-            onOpenPressureCurvePopup(btnBounds.x, btnBounds.bottom());
+            onOpenPressureCurvePopup(btnBounds.right(), btnBounds.bottom());
         }
     };
     curveBtn->visible = state.eraserPressureMode != 0;
@@ -2067,29 +2075,33 @@ void ToolOptionsBar::buildDodgeBurnOptions() {
 
     // Size
     addLabel("Size");
-    sizeSlider = addSlider(Config::MIN_BRUSH_SIZE, Config::MAX_BRUSH_SIZE, state.brushSize, 80);
+    sizeSlider = addNumberSlider(Config::MIN_BRUSH_SIZE, Config::MAX_BRUSH_SIZE, state.brushSize, 0, 50);
+    sizeSlider->suffix = "px";
     sizeSlider->onChanged = [](f32 value) { getAppState().brushSize = value; };
 
     addGroupSpacing();
 
     // Hardness
     addLabel("Hard");
-    hardnessSlider = addSlider(0.0f, 1.0f, state.brushHardness, 60);
-    hardnessSlider->onChanged = [](f32 value) { getAppState().brushHardness = value; };
+    hardnessSlider = addNumberSlider(0.0f, 100.0f, state.brushHardness * 100.0f, 0, 45);
+    hardnessSlider->suffix = "%";
+    hardnessSlider->onChanged = [](f32 value) { getAppState().brushHardness = value / 100.0f; };
 
     addGroupSpacing();
 
     // Exposure
     addLabel("Exposure");
-    opacitySlider = addSlider(0.0f, 1.0f, state.brushOpacity, 60);
-    opacitySlider->onChanged = [](f32 value) { getAppState().brushOpacity = value; };
+    opacitySlider = addNumberSlider(0.0f, 100.0f, state.brushOpacity * 100.0f, 0, 45);
+    opacitySlider->suffix = "%";
+    opacitySlider->onChanged = [](f32 value) { getAppState().brushOpacity = value / 100.0f; };
 
     addGroupSpacing();
 
     // Flow
     addLabel("Flow");
-    auto* flowSlider = addSlider(0.0f, 1.0f, state.brushFlow, 60);
-    flowSlider->onChanged = [](f32 value) { getAppState().brushFlow = value; };
+    auto* flowSlider = addNumberSlider(0.0f, 100.0f, state.brushFlow * 100.0f, 0, 45);
+    flowSlider->suffix = "%";
+    flowSlider->onChanged = [](f32 value) { getAppState().brushFlow = value / 100.0f; };
 
     addGroupSpacing();
 
@@ -2108,7 +2120,7 @@ void ToolOptionsBar::buildDodgeBurnOptions() {
     curveBtn->onClick = [this]() {
         if (onOpenPressureCurvePopup) {
             Rect btnBounds = curveBtn->globalBounds();
-            onOpenPressureCurvePopup(btnBounds.x, btnBounds.bottom());
+            onOpenPressureCurvePopup(btnBounds.right(), btnBounds.bottom());
         }
     };
 
@@ -2153,29 +2165,33 @@ void ToolOptionsBar::buildCloneOptions() {
 
     // Size
     addLabel("Size");
-    sizeSlider = addSlider(Config::MIN_BRUSH_SIZE, Config::MAX_BRUSH_SIZE, state.brushSize, 80);
+    sizeSlider = addNumberSlider(Config::MIN_BRUSH_SIZE, Config::MAX_BRUSH_SIZE, state.brushSize, 0, 50);
+    sizeSlider->suffix = "px";
     sizeSlider->onChanged = [](f32 value) { getAppState().brushSize = value; };
 
     addGroupSpacing();
 
     // Hardness
     addLabel("Hard");
-    hardnessSlider = addSlider(0.0f, 1.0f, state.brushHardness, 60);
-    hardnessSlider->onChanged = [](f32 value) { getAppState().brushHardness = value; };
+    hardnessSlider = addNumberSlider(0.0f, 100.0f, state.brushHardness * 100.0f, 0, 45);
+    hardnessSlider->suffix = "%";
+    hardnessSlider->onChanged = [](f32 value) { getAppState().brushHardness = value / 100.0f; };
 
     addGroupSpacing();
 
     // Opacity
     addLabel("Opacity");
-    opacitySlider = addSlider(0.0f, 1.0f, state.brushOpacity, 60);
-    opacitySlider->onChanged = [](f32 value) { getAppState().brushOpacity = value; };
+    opacitySlider = addNumberSlider(0.0f, 100.0f, state.brushOpacity * 100.0f, 0, 45);
+    opacitySlider->suffix = "%";
+    opacitySlider->onChanged = [](f32 value) { getAppState().brushOpacity = value / 100.0f; };
 
     addGroupSpacing();
 
     // Flow
     addLabel("Flow");
-    auto* flowSlider = addSlider(0.0f, 1.0f, state.brushFlow, 60);
-    flowSlider->onChanged = [](f32 value) { getAppState().brushFlow = value; };
+    auto* flowSlider = addNumberSlider(0.0f, 100.0f, state.brushFlow * 100.0f, 0, 45);
+    flowSlider->suffix = "%";
+    flowSlider->onChanged = [](f32 value) { getAppState().brushFlow = value / 100.0f; };
 
     addGroupSpacing();
 
@@ -2194,7 +2210,7 @@ void ToolOptionsBar::buildCloneOptions() {
     curveBtn->onClick = [this]() {
         if (onOpenPressureCurvePopup) {
             Rect btnBounds = curveBtn->globalBounds();
-            onOpenPressureCurvePopup(btnBounds.x, btnBounds.bottom());
+            onOpenPressureCurvePopup(btnBounds.right(), btnBounds.bottom());
         }
     };
     curveBtn->visible = state.clonePressureMode != 0;
@@ -2215,29 +2231,33 @@ void ToolOptionsBar::buildSmudgeOptions() {
 
     // Size
     addLabel("Size");
-    sizeSlider = addSlider(Config::MIN_BRUSH_SIZE, Config::MAX_BRUSH_SIZE, state.brushSize, 80);
+    sizeSlider = addNumberSlider(Config::MIN_BRUSH_SIZE, Config::MAX_BRUSH_SIZE, state.brushSize, 0, 50);
+    sizeSlider->suffix = "px";
     sizeSlider->onChanged = [](f32 value) { getAppState().brushSize = value; };
 
     addGroupSpacing();
 
     // Hardness
     addLabel("Hard");
-    hardnessSlider = addSlider(0.0f, 1.0f, state.brushHardness, 60);
-    hardnessSlider->onChanged = [](f32 value) { getAppState().brushHardness = value; };
+    hardnessSlider = addNumberSlider(0.0f, 100.0f, state.brushHardness * 100.0f, 0, 45);
+    hardnessSlider->suffix = "%";
+    hardnessSlider->onChanged = [](f32 value) { getAppState().brushHardness = value / 100.0f; };
 
     addGroupSpacing();
 
     // Strength
     addLabel("Strength");
-    opacitySlider = addSlider(0.0f, 1.0f, state.brushOpacity, 60);
-    opacitySlider->onChanged = [](f32 value) { getAppState().brushOpacity = value; };
+    opacitySlider = addNumberSlider(0.0f, 100.0f, state.brushOpacity * 100.0f, 0, 45);
+    opacitySlider->suffix = "%";
+    opacitySlider->onChanged = [](f32 value) { getAppState().brushOpacity = value / 100.0f; };
 
     addGroupSpacing();
 
     // Flow
     addLabel("Flow");
-    auto* flowSlider = addSlider(0.0f, 1.0f, state.brushFlow, 60);
-    flowSlider->onChanged = [](f32 value) { getAppState().brushFlow = value; };
+    auto* flowSlider = addNumberSlider(0.0f, 100.0f, state.brushFlow * 100.0f, 0, 45);
+    flowSlider->suffix = "%";
+    flowSlider->onChanged = [](f32 value) { getAppState().brushFlow = value / 100.0f; };
 
     addGroupSpacing();
 
@@ -2256,7 +2276,7 @@ void ToolOptionsBar::buildSmudgeOptions() {
     curveBtn->onClick = [this]() {
         if (onOpenPressureCurvePopup) {
             Rect btnBounds = curveBtn->globalBounds();
-            onOpenPressureCurvePopup(btnBounds.x, btnBounds.bottom());
+            onOpenPressureCurvePopup(btnBounds.right(), btnBounds.bottom());
         }
     };
     curveBtn->visible = state.smudgePressureMode != 0;
@@ -2291,7 +2311,7 @@ void ToolOptionsBar::buildFillOptions() {
     // Tolerance and Contiguous only shown for Solid Fill mode
     if (state.fillMode == 0) {
         addLabel("Tolerance");
-        toleranceSlider = addSlider(0.0f, 510.0f, state.fillTolerance, 100);
+        toleranceSlider = addNumberSlider(0.0f, 510.0f, state.fillTolerance, 0, 50);
         toleranceSlider->onChanged = [](f32 value) {
             getAppState().fillTolerance = value;
         };
@@ -2314,8 +2334,9 @@ void ToolOptionsBar::buildGradientOptions() {
     // Opacity
     AppState& state = getAppState();
     addLabel("Opacity");
-    opacitySlider = addSlider(0.0f, 1.0f, state.brushOpacity, 80);
-    opacitySlider->onChanged = [](f32 value) { getAppState().brushOpacity = value; };
+    opacitySlider = addNumberSlider(0.0f, 100.0f, state.brushOpacity * 100.0f, 0, 45);
+    opacitySlider->suffix = "%";
+    opacitySlider->onChanged = [](f32 value) { getAppState().brushOpacity = value / 100.0f; };
 }
 
 void ToolOptionsBar::buildMoveOptions() {
@@ -2385,7 +2406,7 @@ void ToolOptionsBar::buildMagicWandOptions() {
 
     // Tolerance
     addLabel("Tolerance");
-    toleranceSlider = addSlider(0.0f, 510.0f, state.wandTolerance, 100);
+    toleranceSlider = addNumberSlider(0.0f, 510.0f, state.wandTolerance, 0, 50);
     toleranceSlider->onChanged = [](f32 value) {
         getAppState().wandTolerance = value;
     };

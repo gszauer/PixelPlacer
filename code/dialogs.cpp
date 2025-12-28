@@ -224,7 +224,7 @@ CanvasSizeDialog::CanvasSizeDialog() : Dialog("Canvas Size") {
     // Width row
     auto widthRow = layout->createChild<HBoxLayout>(6 * Config::uiScale);
     widthRow->preferredSize = Vec2(0, 26 * Config::uiScale);
-    widthRow->createChild<Label>("Width:")->preferredSize = Vec2(50 * Config::uiScale, 22 * Config::uiScale);
+    widthRow->createChild<Label>("Width:")->preferredSize = Vec2(55 * Config::uiScale, 22 * Config::uiScale);
     widthField = widthRow->createChild<TextField>();
     widthField->text = "1920";
     widthField->preferredSize = Vec2(60 * Config::uiScale, 22 * Config::uiScale);
@@ -234,7 +234,7 @@ CanvasSizeDialog::CanvasSizeDialog() : Dialog("Canvas Size") {
     // Height row
     auto heightRow = layout->createChild<HBoxLayout>(6 * Config::uiScale);
     heightRow->preferredSize = Vec2(0, 26 * Config::uiScale);
-    heightRow->createChild<Label>("Height:")->preferredSize = Vec2(50 * Config::uiScale, 22 * Config::uiScale);
+    heightRow->createChild<Label>("Height:")->preferredSize = Vec2(55 * Config::uiScale, 22 * Config::uiScale);
     heightField = heightRow->createChild<TextField>();
     heightField->text = "1080";
     heightField->preferredSize = Vec2(60 * Config::uiScale, 22 * Config::uiScale);
@@ -246,7 +246,7 @@ CanvasSizeDialog::CanvasSizeDialog() : Dialog("Canvas Size") {
     anchorRow->preferredSize = Vec2(0, 56 * Config::uiScale);
 
     auto anchorLabel = anchorRow->createChild<Label>("Anchor:");
-    anchorLabel->preferredSize = Vec2(50 * Config::uiScale, 22 * Config::uiScale);
+    anchorLabel->preferredSize = Vec2(55 * Config::uiScale, 22 * Config::uiScale);
 
     anchorGrid = anchorRow->createChild<AnchorGridWidget>();
     anchorGrid->preferredSize = Vec2(50 * Config::uiScale, 50 * Config::uiScale);
@@ -313,7 +313,7 @@ RenameDocumentDialog::RenameDocumentDialog() : Dialog("Rename Document") {
     // Name row
     auto nameRow = layout->createChild<HBoxLayout>(6 * Config::uiScale);
     nameRow->preferredSize = Vec2(0, 26 * Config::uiScale);
-    nameRow->createChild<Label>("Name:")->preferredSize = Vec2(45 * Config::uiScale, 22 * Config::uiScale);
+    nameRow->createChild<Label>("Name:")->preferredSize = Vec2(55 * Config::uiScale, 22 * Config::uiScale);
     nameField = nameRow->createChild<TextField>();
     nameField->text = "Untitled";
     nameField->horizontalPolicy = SizePolicy::Expanding;
@@ -470,7 +470,7 @@ AboutDialog::AboutDialog() : Dialog("About") {
     content->createChild<Spacer>();
 
     // Pixel Placer link
-    auto link1 = content->createChild<LinkLabel>("Pixel Placer", "https://github.com/gszauer/PixelPlacer");
+    auto link1 = content->createChild<LinkLabel>("Pixel Placer", "https://pixelplacer.app");
     link1->horizontalPolicy = SizePolicy::Expanding;
 
     // Author link
@@ -478,7 +478,7 @@ AboutDialog::AboutDialog() : Dialog("About") {
     link2->horizontalPolicy = SizePolicy::Expanding;
 
     // Claude link
-    auto link3 = content->createChild<LinkLabel>("Vibe-coded with Claude 4.5-Max", "https://claude.ai");
+    auto link3 = content->createChild<LinkLabel>("Claude 4.5-Max", "https://claude.ai");
     link3->horizontalPolicy = SizePolicy::Expanding;
 
     content->createChild<Spacer>();

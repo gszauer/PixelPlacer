@@ -309,7 +309,9 @@ void PressureCurvePopup::show() {
 }
 
 void PressureCurvePopup::show(f32 x, f32 y) {
-    setBounds(x, y, preferredSize.x, preferredSize.y);
+    // Align right edge of popup with x (popup opens to the left)
+    f32 popupX = x - preferredSize.x;
+    setBounds(popupX, y, preferredSize.x, preferredSize.y);
     show();
     layout();
 }
@@ -805,7 +807,7 @@ BrushTipSelectorPopup::BrushTipSelectorPopup() : Dialog("Brush Tip") {
 
     auto sizeJitterRow = mainLayout->createChild<HBoxLayout>(4 * Config::uiScale);
     sizeJitterRow->preferredSize = Vec2(0, 24 * Config::uiScale);
-    sizeJitterRow->createChild<Label>("Size Jitter")->preferredSize = Vec2(70 * Config::uiScale, 20 * Config::uiScale);
+    sizeJitterRow->createChild<Label>("Size Jitter")->preferredSize = Vec2(80 * Config::uiScale, 20 * Config::uiScale);
     sizeJitterSlider = sizeJitterRow->createChild<Slider>(0.0f, 1.0f, 0.0f);
     sizeJitterSlider->horizontalPolicy = SizePolicy::Expanding;
     sizeJitterSlider->onChanged = [](f32 val) {
@@ -825,7 +827,7 @@ BrushTipSelectorPopup::BrushTipSelectorPopup() : Dialog("Brush Tip") {
 
     auto angleJitterRow = mainLayout->createChild<HBoxLayout>(4 * Config::uiScale);
     angleJitterRow->preferredSize = Vec2(0, 24 * Config::uiScale);
-    angleJitterRow->createChild<Label>("Angle Jitter")->preferredSize = Vec2(70 * Config::uiScale, 20 * Config::uiScale);
+    angleJitterRow->createChild<Label>("Angle Jitter")->preferredSize = Vec2(80 * Config::uiScale, 20 * Config::uiScale);
     angleJitterSlider = angleJitterRow->createChild<Slider>(0.0f, 180.0f, 0.0f);
     angleJitterSlider->horizontalPolicy = SizePolicy::Expanding;
     angleJitterSlider->onChanged = [](f32 val) {

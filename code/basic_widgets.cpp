@@ -354,15 +354,37 @@ void FontRenderer::renderToCanvas(TiledCanvas& canvas, const std::string& text, 
 
     i32 ascent, descent, lineGap;
     stbtt_GetFontVMetrics(font, &ascent, &descent, &lineGap);
-    ascent = static_cast<i32>(ascent * scale);
+    i32 scaledAscent = static_cast<i32>(ascent * scale);
+    f32 lineHeight = (ascent - descent + lineGap) * scale;
+
+    // Calculate tab width (4 spaces)
+    i32 spaceAdvance, spaceLsb;
+    stbtt_GetCodepointHMetrics(font, ' ', &spaceAdvance, &spaceLsb);
+    f32 tabWidth = spaceAdvance * scale * 4;
 
     f32 xpos = static_cast<f32>(x);
+    f32 ypos = static_cast<f32>(y);
 
     u8 cr, cg, cb, ca;
     Blend::unpack(color, cr, cg, cb, ca);
 
     for (size_t i = 0; i < text.size(); ++i) {
         i32 c = static_cast<u8>(text[i]);
+
+        // Handle newline
+        if (c == '\n') {
+            xpos = static_cast<f32>(x);
+            ypos += lineHeight;
+            continue;
+        }
+
+        // Handle tab
+        if (c == '\t') {
+            xpos += tabWidth;
+            continue;
+        }
+
+        // Skip other control characters
         if (c < 32) continue;
 
         i32 advance, lsb;
@@ -379,7 +401,7 @@ void FontRenderer::renderToCanvas(TiledCanvas& canvas, const std::string& text, 
             stbtt_MakeCodepointBitmap(font, bitmap.data(), bw, bh, bw, scale, scale, c);
 
             i32 gx = static_cast<i32>(xpos) + x0;
-            i32 gy = y + ascent + y0;
+            i32 gy = static_cast<i32>(ypos) + scaledAscent + y0;
 
             for (i32 by = 0; by < bh; ++by) {
                 for (i32 bx = 0; bx < bw; ++bx) {
@@ -409,22 +431,55 @@ Vec2 FontRenderer::measureTextWithFont(const std::string& text, f32 size, const 
 
     i32 ascent, descent, lineGap;
     stbtt_GetFontVMetrics(font, &ascent, &descent, &lineGap);
+    f32 lineHeight = (ascent - descent + lineGap) * scale;
+    f32 singleLineHeight = (ascent - descent) * scale;
 
-    f32 width = 0;
+    // Calculate tab width (4 spaces)
+    i32 spaceAdvance, spaceLsb;
+    stbtt_GetCodepointHMetrics(font, ' ', &spaceAdvance, &spaceLsb);
+    f32 tabWidth = spaceAdvance * scale * 4;
+
+    f32 maxWidth = 0;
+    f32 currentWidth = 0;
+    i32 lineCount = 1;
 
     for (size_t i = 0; i < text.size(); ++i) {
         i32 c = static_cast<u8>(text[i]);
+
+        // Handle newline
+        if (c == '\n') {
+            maxWidth = std::max(maxWidth, currentWidth);
+            currentWidth = 0;
+            lineCount++;
+            continue;
+        }
+
+        // Handle tab
+        if (c == '\t') {
+            currentWidth += tabWidth;
+            continue;
+        }
+
+        // Skip other control characters
+        if (c < 32) continue;
+
         i32 advance, lsb;
         stbtt_GetCodepointHMetrics(font, c, &advance, &lsb);
-        width += advance * scale;
+        currentWidth += advance * scale;
 
         if (i + 1 < text.size()) {
-            i32 kern = stbtt_GetCodepointKernAdvance(font, c, static_cast<u8>(text[i + 1]));
-            width += kern * scale;
+            i32 nextC = static_cast<u8>(text[i + 1]);
+            if (nextC >= 32) {  // Only kern with printable chars
+                i32 kern = stbtt_GetCodepointKernAdvance(font, c, nextC);
+                currentWidth += kern * scale;
+            }
         }
     }
 
-    return Vec2(width, (ascent - descent) * scale);
+    maxWidth = std::max(maxWidth, currentWidth);
+    f32 totalHeight = singleLineHeight + (lineCount - 1) * lineHeight;
+
+    return Vec2(maxWidth, totalHeight);
 }
 
 void FontRenderer::renderIconCentered(Framebuffer& fb, const std::string& icon, const Rect& bounds, u32 color, f32 size, const std::string& fontName) {
@@ -744,6 +799,520 @@ void Slider::updateValueFromMouse(f32 x) {
         value = newValue;
         if (onChanged) onChanged(value);
     }
+}
+
+// NumberSliderPopup implementation
+NumberSliderPopup::NumberSliderPopup() {
+    preferredSize = Vec2(100 * Config::uiScale, 20 * Config::uiScale);
+    visible = false;
+}
+
+void NumberSliderPopup::renderSelf(Framebuffer& fb) {
+    if (!visible || !owner) return;
+
+    Rect global = globalBounds();
+    f32 padding = 4 * Config::uiScale;
+    f32 trackHeight = 8 * Config::uiScale;
+    f32 thumbWidth = 12 * Config::uiScale;
+
+    // Background
+    fb.fillRect(Recti(global), bgColor);
+    fb.drawRect(Recti(global), borderColor);
+
+    // Track
+    f32 trackY = global.y + (global.h - trackHeight) / 2;
+    Rect trackRect(global.x + padding, trackY, global.w - padding * 2, trackHeight);
+    fb.fillRect(Recti(trackRect), trackColor);
+
+    // Fill (up to current value)
+    f32 normalized = owner->getNormalizedValue();
+    f32 fillWidth = (trackRect.w - thumbWidth) * normalized;
+    if (fillWidth > 0) {
+        Rect fillRect(trackRect.x, trackRect.y, fillWidth + thumbWidth / 2, trackHeight);
+        fb.fillRect(Recti(fillRect), fillColor);
+    }
+
+    // Thumb
+    f32 thumbX = trackRect.x + (trackRect.w - thumbWidth) * normalized;
+    Rect thumbRect(thumbX, global.y + 2 * Config::uiScale, thumbWidth, global.h - 4 * Config::uiScale);
+    fb.fillRect(Recti(thumbRect), thumbColor);
+}
+
+bool NumberSliderPopup::onMouseDown(const MouseEvent& e) {
+    if (!visible || !owner || e.button != MouseButton::Left) return false;
+
+    if (bounds.containsLocal(e.position)) {
+        dragging = true;
+        getAppState().capturedWidget = this;  // Capture mouse while dragging
+        updateValueFromMouse(e.position.x);
+        return true;
+    }
+    return false;
+}
+
+bool NumberSliderPopup::onMouseDrag(const MouseEvent& e) {
+    if (!dragging || !owner) return false;
+    updateValueFromMouse(e.position.x);
+    return true;
+}
+
+bool NumberSliderPopup::onMouseUp(const MouseEvent& e) {
+    if (dragging) {
+        dragging = false;
+        getAppState().capturedWidget = nullptr;  // Release mouse capture
+        return true;
+    }
+    return false;
+}
+
+void NumberSliderPopup::updateValueFromMouse(f32 x) {
+    if (!owner) return;
+
+    f32 padding = 4 * Config::uiScale;
+    f32 thumbWidth = 12 * Config::uiScale;
+    f32 trackWidth = bounds.w - padding * 2 - thumbWidth;
+
+    f32 normalized = (x - padding - thumbWidth / 2) / trackWidth;
+    normalized = clamp(normalized, 0.0f, 1.0f);
+
+    f32 newValue = owner->minValue + normalized * (owner->maxValue - owner->minValue);
+
+    // Clamp to bounds
+    if (!owner->minUnbound) newValue = std::max(newValue, owner->minValue);
+    if (!owner->maxUnbound) newValue = std::min(newValue, owner->maxValue);
+
+    if (newValue != owner->value) {
+        owner->value = newValue;
+        owner->editText = owner->getDisplayText();
+        owner->cursorPos = 0;
+        if (owner->onChanged) owner->onChanged(owner->value);
+        getAppState().needsRedraw = true;
+    }
+}
+
+// NumberSlider implementation
+NumberSlider::NumberSlider() {
+    focusable = true;
+    preferredSize = Vec2(60 * Config::uiScale, 24 * Config::uiScale);
+    minSize = Vec2(40 * Config::uiScale, 20 * Config::uiScale);
+}
+
+NumberSlider::NumberSlider(f32 min, f32 max, f32 initial, i32 decimalPlaces)
+    : value(initial), minValue(min), maxValue(max), decimals(decimalPlaces) {
+    focusable = true;
+    preferredSize = Vec2(60 * Config::uiScale, 24 * Config::uiScale);
+    minSize = Vec2(40 * Config::uiScale, 20 * Config::uiScale);
+    editText = getDisplayText();
+}
+
+void NumberSlider::setValue(f32 v) {
+    if (!minUnbound) v = std::max(v, minValue);
+    if (!maxUnbound) v = std::min(v, maxValue);
+    value = v;
+    if (!editing) {
+        editText = getDisplayText();
+        cursorPos = 0;
+    }
+}
+
+f32 NumberSlider::getNormalizedValue() const {
+    if (maxValue == minValue) return 0.0f;
+    return clamp((value - minValue) / (maxValue - minValue), 0.0f, 1.0f);
+}
+
+std::string NumberSlider::getDisplayText() const {
+    char buf[32];
+    if (decimals == 0) {
+        snprintf(buf, sizeof(buf), "%d", static_cast<i32>(std::round(value)));
+    } else {
+        snprintf(buf, sizeof(buf), "%.*f", decimals, value);
+    }
+    return std::string(buf);
+}
+
+void NumberSlider::showPopup() {
+    if (!popup) {
+        popup = std::make_unique<NumberSliderPopup>();
+        popup->owner = this;
+    }
+
+    Rect global = globalBounds();
+    f32 popupHeight = 20 * Config::uiScale;
+    f32 minPopupWidth = 150 * Config::uiScale;
+    f32 popupWidth = std::max(global.w, minPopupWidth);
+    // Center popup under the text field
+    f32 popupX = global.x + (global.w - popupWidth) / 2;
+    popup->setBounds(popupX, global.bottom() + 2, popupWidth, popupHeight);
+    popup->visible = true;
+
+    OverlayManager::instance().registerOverlay(popup.get(), ZOrder::DROPDOWN,
+        [this]() { hidePopup(); });
+
+    getAppState().needsRedraw = true;
+}
+
+void NumberSlider::hidePopup() {
+    if (popup) {
+        popup->visible = false;
+        OverlayManager::instance().unregisterOverlay(popup.get());
+    }
+    getAppState().needsRedraw = true;
+}
+
+void NumberSlider::commitEdit() {
+    // Try to parse the edited text
+    if (editText.empty()) {
+        // Empty text - revert to current value
+        editText = getDisplayText();
+        cursorPos = 0;
+        return;
+    }
+
+    try {
+        f32 newValue = std::stof(editText);
+
+        // Clamp to bounds
+        if (!minUnbound) newValue = std::max(newValue, minValue);
+        if (!maxUnbound) newValue = std::min(newValue, maxValue);
+
+        if (newValue != value) {
+            value = newValue;
+            if (onChanged) onChanged(value);
+        }
+    } catch (...) {
+        // Invalid number - revert
+    }
+
+    // Always update display text to normalized form
+    editText = getDisplayText();
+    cursorPos = 0;
+    editing = false;
+}
+
+void NumberSlider::renderSelf(Framebuffer& fb) {
+    Rect global = globalBounds();
+
+    // Background
+    fb.fillRect(Recti(global), bgColor);
+    fb.drawRect(Recti(global), focused ? focusBorderColor : borderColor);
+
+    // Text
+    f32 padding = 4 * Config::uiScale;
+    std::string displayText = editing ? editText : getDisplayText();
+    if (!suffix.empty() && !editing) {
+        displayText += suffix;
+    }
+
+    Vec2 textSize = FontRenderer::instance().measureText(displayText, Config::defaultFontSize());
+    i32 textX = static_cast<i32>(global.x + padding);
+    i32 textY = static_cast<i32>(global.y + (global.h - textSize.y) / 2);
+
+    // Draw selection highlight (when editing)
+    if (focused && editing && hasSelection()) {
+        i32 selStart = std::min(selectionStart, cursorPos);
+        i32 selEnd = std::max(selectionStart, cursorPos);
+        std::string beforeSel = editText.substr(0, selStart);
+        std::string inSel = editText.substr(selStart, selEnd - selStart);
+        f32 selStartX = FontRenderer::instance().measureText(beforeSel, Config::defaultFontSize()).x;
+        f32 selWidth = FontRenderer::instance().measureText(inSel, Config::defaultFontSize()).x;
+        fb.fillRect(Recti(textX + static_cast<i32>(selStartX), textY,
+                          static_cast<i32>(selWidth), static_cast<i32>(textSize.y)),
+                    Config::COLOR_SELECTION);
+    }
+
+    FontRenderer::instance().renderText(fb, displayText, textX, textY, textColor, Config::defaultFontSize());
+
+    // Cursor (when editing)
+    if (focused && editing) {
+        u64 now = Platform::getMilliseconds();
+        if ((now - cursorBlinkTime) % 1000 < 500) {
+            // Measure text up to cursor
+            std::string beforeCursor = editText.substr(0, cursorPos);
+            Vec2 beforeSize = FontRenderer::instance().measureText(beforeCursor, Config::defaultFontSize());
+            i32 cursorX = textX + static_cast<i32>(beforeSize.x);
+            fb.fillRect(Recti(cursorX, textY, 1, static_cast<i32>(textSize.y)), textColor);
+        }
+    }
+
+    // Update popup position if visible (in case parent scrolled)
+    if (popup && popup->visible) {
+        f32 popupHeight = 20 * Config::uiScale;
+        f32 minPopupWidth = 150 * Config::uiScale;
+        f32 popupWidth = std::max(global.w, minPopupWidth);
+        f32 popupX = global.x + (global.w - popupWidth) / 2;
+        popup->setBounds(popupX, global.bottom() + 2, popupWidth, popupHeight);
+    }
+}
+
+i32 NumberSlider::positionFromX(f32 localX) {
+    f32 padding = 4 * Config::uiScale;
+    f32 clickX = localX - padding;
+    i32 pos = 0;
+    for (size_t i = 0; i <= editText.size(); ++i) {
+        std::string substr = editText.substr(0, i);
+        f32 w = FontRenderer::instance().measureText(substr, Config::defaultFontSize()).x;
+        if (w > clickX) {
+            pos = static_cast<i32>(i > 0 ? i - 1 : 0);
+            return pos;
+        }
+        pos = static_cast<i32>(i);
+    }
+    return pos;
+}
+
+void NumberSlider::deleteSelection() {
+    if (!hasSelection()) return;
+    i32 selStart = std::min(selectionStart, cursorPos);
+    i32 selEnd = std::max(selectionStart, cursorPos);
+    editText.erase(selStart, selEnd - selStart);
+    cursorPos = selStart;
+    selectionStart = -1;
+}
+
+bool NumberSlider::onMouseDown(const MouseEvent& e) {
+    if (!enabled || e.button != MouseButton::Left) return false;
+
+    if (bounds.containsLocal(e.position)) {
+        // Start editing mode
+        if (!editing) {
+            editing = true;
+            editText = getDisplayText();
+        }
+
+        i32 newCursorPos = positionFromX(e.position.x);
+
+        // Double-click detection for select all
+        static u64 lastClickTime = 0;
+        static i32 lastClickPos = -1;
+        u64 now = Platform::getMilliseconds();
+
+        if (now - lastClickTime < 300 && newCursorPos == lastClickPos) {
+            // Double click - select all
+            selectionStart = 0;
+            cursorPos = static_cast<i32>(editText.size());
+            draggingSelection = false;
+            lastClickTime = 0;  // Reset to prevent triple-click
+        } else {
+            // Single click - position cursor and start drag
+            cursorPos = newCursorPos;
+            selectionStart = cursorPos;
+            draggingSelection = true;
+            lastClickTime = now;
+            lastClickPos = newCursorPos;
+        }
+
+        cursorBlinkTime = Platform::getMilliseconds();
+        showPopup();
+        getAppState().needsRedraw = true;
+        return true;
+    }
+    return false;
+}
+
+bool NumberSlider::onMouseDrag(const MouseEvent& e) {
+    if (!enabled || !focused || !draggingSelection) return false;
+
+    // Update cursor position to extend selection
+    cursorPos = positionFromX(e.position.x);
+    cursorBlinkTime = Platform::getMilliseconds();
+    getAppState().needsRedraw = true;
+    return true;
+}
+
+bool NumberSlider::onMouseUp(const MouseEvent& e) {
+    if (draggingSelection) {
+        draggingSelection = false;
+        // If selection start equals cursor position, clear selection
+        if (selectionStart == cursorPos) {
+            selectionStart = -1;
+        }
+        getAppState().needsRedraw = true;
+    }
+    return Widget::onMouseUp(e);
+}
+
+bool NumberSlider::onKeyDown(const KeyEvent& e) {
+    if (!enabled || !focused) return false;
+
+    // Ensure cursorPos is valid
+    if (cursorPos < 0) cursorPos = 0;
+    if (cursorPos > static_cast<i32>(editText.size())) cursorPos = static_cast<i32>(editText.size());
+
+    if (e.keyCode == Key::RETURN) {
+        commitEdit();
+        selectionStart = -1;
+        // Release focus
+        getAppState().focusedWidget = nullptr;
+        onBlur();
+        return true;
+    }
+
+    if (e.keyCode == Key::ESCAPE) {
+        editText = getDisplayText();
+        cursorPos = 0;
+        selectionStart = -1;
+        editing = false;
+        // Release focus
+        getAppState().focusedWidget = nullptr;
+        onBlur();
+        return true;
+    }
+
+    if (e.keyCode == Key::TAB) {
+        commitEdit();
+        selectionStart = -1;
+        // Let parent handle tab navigation
+        return false;
+    }
+
+    // Ctrl+A to select all
+    if (e.keyCode == Key::A && e.mods.ctrl) {
+        selectionStart = 0;
+        cursorPos = static_cast<i32>(editText.size());
+        cursorBlinkTime = Platform::getMilliseconds();
+        getAppState().needsRedraw = true;
+        return true;
+    }
+
+    if (e.keyCode == Key::BACKSPACE) {
+        if (hasSelection()) {
+            deleteSelection();
+        } else if (cursorPos > 0 && cursorPos <= static_cast<i32>(editText.size())) {
+            editText.erase(cursorPos - 1, 1);
+            cursorPos--;
+        }
+        cursorBlinkTime = Platform::getMilliseconds();
+        getAppState().needsRedraw = true;
+        return true;
+    }
+
+    if (e.keyCode == Key::DELETE) {
+        if (hasSelection()) {
+            deleteSelection();
+        } else if (cursorPos >= 0 && cursorPos < static_cast<i32>(editText.size())) {
+            editText.erase(cursorPos, 1);
+        }
+        cursorBlinkTime = Platform::getMilliseconds();
+        getAppState().needsRedraw = true;
+        return true;
+    }
+
+    if (e.keyCode == Key::LEFT) {
+        if (hasSelection() && !e.mods.shift) {
+            // Move to start of selection
+            cursorPos = std::min(selectionStart, cursorPos);
+            selectionStart = -1;
+        } else {
+            if (e.mods.shift && selectionStart < 0) {
+                selectionStart = cursorPos;
+            }
+            if (cursorPos > 0) cursorPos--;
+            if (!e.mods.shift) selectionStart = -1;
+        }
+        cursorBlinkTime = Platform::getMilliseconds();
+        getAppState().needsRedraw = true;
+        return true;
+    }
+
+    if (e.keyCode == Key::RIGHT) {
+        if (hasSelection() && !e.mods.shift) {
+            // Move to end of selection
+            cursorPos = std::max(selectionStart, cursorPos);
+            selectionStart = -1;
+        } else {
+            if (e.mods.shift && selectionStart < 0) {
+                selectionStart = cursorPos;
+            }
+            if (cursorPos < static_cast<i32>(editText.size())) cursorPos++;
+            if (!e.mods.shift) selectionStart = -1;
+        }
+        cursorBlinkTime = Platform::getMilliseconds();
+        getAppState().needsRedraw = true;
+        return true;
+    }
+
+    if (e.keyCode == Key::HOME) {
+        if (e.mods.shift && selectionStart < 0) {
+            selectionStart = cursorPos;
+        }
+        cursorPos = 0;
+        if (!e.mods.shift) selectionStart = -1;
+        cursorBlinkTime = Platform::getMilliseconds();
+        getAppState().needsRedraw = true;
+        return true;
+    }
+
+    if (e.keyCode == Key::END) {
+        if (e.mods.shift && selectionStart < 0) {
+            selectionStart = cursorPos;
+        }
+        cursorPos = static_cast<i32>(editText.size());
+        if (!e.mods.shift) selectionStart = -1;
+        cursorBlinkTime = Platform::getMilliseconds();
+        getAppState().needsRedraw = true;
+        return true;
+    }
+
+    return false;
+}
+
+bool NumberSlider::onTextInput(const std::string& input) {
+    if (!enabled || !focused) return false;
+
+    // Delete selection first if any
+    if (hasSelection()) {
+        deleteSelection();
+    }
+
+    // Filter for valid numeric characters only
+    for (char c : input) {
+        bool valid = false;
+
+        // Digits are always valid
+        if (c >= '0' && c <= '9') {
+            valid = true;
+        }
+        // Minus sign only at start
+        else if (c == '-') {
+            if (cursorPos == 0 && editText.find('-') == std::string::npos) {
+                valid = true;
+            }
+        }
+        // Decimal point only if decimals > 0 and not already present
+        else if (c == '.') {
+            if (decimals > 0 && editText.find('.') == std::string::npos) {
+                valid = true;
+            }
+        }
+
+        if (valid) {
+            // Clamp cursorPos to valid range
+            if (cursorPos < 0) cursorPos = 0;
+            if (cursorPos > static_cast<i32>(editText.size())) cursorPos = static_cast<i32>(editText.size());
+
+            editText.insert(cursorPos, 1, c);
+            cursorPos++;
+        }
+    }
+
+    cursorBlinkTime = Platform::getMilliseconds();
+    getAppState().needsRedraw = true;
+    return true;
+}
+
+void NumberSlider::onFocus() {
+    Widget::onFocus();
+    editing = true;
+    editText = getDisplayText();
+    cursorPos = static_cast<i32>(editText.size());  // Cursor at end
+    cursorBlinkTime = Platform::getMilliseconds();
+    showPopup();
+}
+
+void NumberSlider::onBlur() {
+    Widget::onBlur();
+    commitEdit();
+    hidePopup();
 }
 
 // TextField implementation

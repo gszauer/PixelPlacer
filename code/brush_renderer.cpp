@@ -81,6 +81,7 @@ void stamp(TiledCanvas& canvas, const BrushStamp& brush,
 }
 
 // Stamp to stroke buffer with flow
+// Uses MAX blending to prevent overlapping dabs from accumulating opacity
 void stampToBuffer(TiledCanvas& buffer, const BrushStamp& brush,
                    const Vec2& pos, u32 color, f32 flow,
                    BlendMode mode, const Selection* selection) {
@@ -111,9 +112,15 @@ void stampToBuffer(TiledCanvas& buffer, const BrushStamp& brush,
             // Apply flow to brush alpha
             f32 finalAlpha = brushAlpha * flow * (ca / 255.0f);
             u8 newAlpha = static_cast<u8>(std::min(255.0f, finalAlpha * 255.0f));
-            u32 brushColor = Blend::pack(cr, cg, cb, newAlpha);
 
-            buffer.blendPixel(canvasX, canvasY, brushColor, mode, 1.0f);
+            // Use MAX blending: only replace if new alpha is greater
+            // This prevents overlapping dabs from building up opacity
+            u32 existing = buffer.getPixel(canvasX, canvasY);
+            u8 existingAlpha = existing & 0xFF;
+            if (newAlpha > existingAlpha) {
+                u32 brushColor = Blend::pack(cr, cg, cb, newAlpha);
+                buffer.setPixel(canvasX, canvasY, brushColor);
+            }
         }
     }
 }

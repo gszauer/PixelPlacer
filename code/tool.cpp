@@ -160,14 +160,31 @@ void MoveTool::updateCorners(const PixelLayer* layer) {
     canvasWidth = w;
     canvasHeight = h;
 
-    // Get the transformation matrix
+    // Get content bounds for tight bounding box
+    contentBounds = layer->canvas.getContentBounds();
+    hasContent = (contentBounds.w > 0 && contentBounds.h > 0);
+
+    // Get the transformation matrix (based on full canvas for correct pivot handling)
     Matrix3x2 mat = layer->transform.toMatrix(w, h);
 
-    // Transform the four corners of the canvas
-    corners[0] = mat.transform(Vec2(0, 0));         // Top-left
-    corners[1] = mat.transform(Vec2(w, 0));         // Top-right
-    corners[2] = mat.transform(Vec2(w, h));         // Bottom-right
-    corners[3] = mat.transform(Vec2(0, h));         // Bottom-left
+    if (hasContent) {
+        // Transform the four corners of the content bounds
+        f32 cx = static_cast<f32>(contentBounds.x);
+        f32 cy = static_cast<f32>(contentBounds.y);
+        f32 cw = static_cast<f32>(contentBounds.w);
+        f32 ch = static_cast<f32>(contentBounds.h);
+
+        corners[0] = mat.transform(Vec2(cx, cy));               // Top-left
+        corners[1] = mat.transform(Vec2(cx + cw, cy));          // Top-right
+        corners[2] = mat.transform(Vec2(cx + cw, cy + ch));     // Bottom-right
+        corners[3] = mat.transform(Vec2(cx, cy + ch));          // Bottom-left
+    } else {
+        // No content, use full canvas
+        corners[0] = mat.transform(Vec2(0, 0));         // Top-left
+        corners[1] = mat.transform(Vec2(w, 0));         // Top-right
+        corners[2] = mat.transform(Vec2(w, h));         // Bottom-right
+        corners[3] = mat.transform(Vec2(0, h));         // Bottom-left
+    }
 
     // Calculate pivot position in document space
     f32 px = layer->transform.pivot.x * w;
@@ -266,6 +283,65 @@ void MoveTool::onMouseDown(Document& doc, const ToolEvent& e) {
     LayerBase* layer = doc.getActiveLayer();
     if (!layer || layer->locked) return;
 
+    // Reset selection moving state
+    movingSelection = false;
+    movingContent = false;
+
+    // Check if there's an active selection and we're clicking inside it
+    if (doc.selection.hasSelection && layer->isPixelLayer()) {
+        i32 mx = static_cast<i32>(e.position.x);
+        i32 my = static_cast<i32>(e.position.y);
+
+        // Check if click is inside selection bounds and the pixel is selected
+        if (mx >= doc.selection.bounds.x && mx < doc.selection.bounds.x + doc.selection.bounds.w &&
+            my >= doc.selection.bounds.y && my < doc.selection.bounds.y + doc.selection.bounds.h &&
+            doc.selection.isSelected(mx, my)) {
+
+            // We're moving the selection
+            movingSelection = true;
+            movingContent = true;  // Move pixels with selection
+            startPos = e.position;
+            lastPos = e.position;
+            dragging = true;
+
+            // Lift pixels into floating content if not already floating
+            if (!doc.floatingContent.active) {
+                PixelLayer* pixelLayer = static_cast<PixelLayer*>(layer);
+
+                // Create floating canvas from selection
+                Recti selBounds = doc.selection.bounds;
+                floatingPixels = std::make_unique<TiledCanvas>(selBounds.w, selBounds.h);
+                floatingOrigin = selBounds;
+
+                // Copy selected pixels and clear them from layer
+                for (i32 y = selBounds.y; y < selBounds.y + selBounds.h; ++y) {
+                    for (i32 x = selBounds.x; x < selBounds.x + selBounds.w; ++x) {
+                        if (x >= 0 && y >= 0 &&
+                            x < static_cast<i32>(doc.width) && y < static_cast<i32>(doc.height) &&
+                            doc.selection.isSelected(x, y)) {
+                            u32 pixel = pixelLayer->canvas.getPixel(x, y);
+                            if ((pixel & 0xFF) > 0) {
+                                floatingPixels->setPixel(x - selBounds.x, y - selBounds.y, pixel);
+                                pixelLayer->canvas.setPixel(x, y, 0);  // Clear original
+                            }
+                        }
+                    }
+                }
+
+                // Set up document's floating content reference
+                doc.floatingContent.pixels = floatingPixels.get();
+                doc.floatingContent.originalBounds = selBounds;
+                doc.floatingContent.currentOffset = Vec2(0, 0);
+                doc.floatingContent.sourceLayer = pixelLayer;
+                doc.floatingContent.active = true;
+            }
+
+            getAppState().needsRedraw = true;
+            return;
+        }
+    }
+
+    // Not moving selection - handle layer transform
     // Initialize pivot if this is a new layer
     if (layer != lastInitializedLayer) {
         if (layer->isPixelLayer()) {
@@ -303,7 +379,34 @@ void MoveTool::onMouseDown(Document& doc, const ToolEvent& e) {
 }
 
 void MoveTool::onMouseDrag(Document& doc, const ToolEvent& e) {
-    if (!dragging || activeHandle == TransformHandle::None) return;
+    if (!dragging) return;
+
+    // Handle selection movement
+    if (movingSelection) {
+        // Calculate incremental movement
+        i32 dx = static_cast<i32>(std::round(e.position.x)) - static_cast<i32>(std::round(lastPos.x));
+        i32 dy = static_cast<i32>(std::round(e.position.y)) - static_cast<i32>(std::round(lastPos.y));
+
+        // Update floating content offset
+        if (doc.floatingContent.active) {
+            doc.floatingContent.currentOffset.x += dx;
+            doc.floatingContent.currentOffset.y += dy;
+        }
+
+        // Move the selection mask incrementally
+        if (dx != 0 || dy != 0) {
+            doc.selection.offset(dx, dy);
+        }
+
+        lastPos = e.position;
+
+        doc.notifyChanged(Rect(0, 0, doc.width, doc.height));
+        getAppState().needsRedraw = true;
+        return;
+    }
+
+    // Handle layer transform
+    if (activeHandle == TransformHandle::None) return;
 
     LayerBase* layer = doc.getActiveLayer();
     if (!layer || layer->locked) return;
@@ -421,6 +524,40 @@ void MoveTool::onMouseDrag(Document& doc, const ToolEvent& e) {
 }
 
 void MoveTool::onMouseUp(Document& doc, const ToolEvent& e) {
+    // Drop floating content if we were moving a selection
+    if (movingSelection && doc.floatingContent.active && floatingPixels) {
+        PixelLayer* layer = doc.getActivePixelLayer();
+        if (layer) {
+            // Calculate final position
+            i32 offsetX = static_cast<i32>(std::round(doc.floatingContent.currentOffset.x));
+            i32 offsetY = static_cast<i32>(std::round(doc.floatingContent.currentOffset.y));
+
+            // Paste floating pixels back to layer at new position
+            Recti origBounds = doc.floatingContent.originalBounds;
+            for (i32 y = 0; y < static_cast<i32>(floatingPixels->height); ++y) {
+                for (i32 x = 0; x < static_cast<i32>(floatingPixels->width); ++x) {
+                    u32 pixel = floatingPixels->getPixel(x, y);
+                    if ((pixel & 0xFF) > 0) {
+                        i32 destX = origBounds.x + x + offsetX;
+                        i32 destY = origBounds.y + y + offsetY;
+                        if (destX >= 0 && destY >= 0 &&
+                            destX < static_cast<i32>(layer->canvas.width) &&
+                            destY < static_cast<i32>(layer->canvas.height)) {
+                            layer->canvas.setPixel(destX, destY, pixel);
+                        }
+                    }
+                }
+            }
+            // Selection mask already moved during drag, no need to offset again
+        }
+
+        // Clear floating content
+        floatingPixels.reset();
+        doc.floatingContent.clear();
+    }
+
+    movingSelection = false;
+    movingContent = false;
     dragging = false;
     activeHandle = TransformHandle::None;
     getAppState().needsRedraw = true;
@@ -431,30 +568,92 @@ void MoveTool::onKeyDown(Document& doc, i32 keyCode) {
     if (!layer || layer->locked) return;
 
     // Arrow key nudging
-    f32 nudge = 1.0f;
+    i32 nudge = 1;
     bool moved = false;
+    i32 dx = 0, dy = 0;
 
     switch (keyCode) {
-        case Key::LEFT:
-            layer->transform.position.x -= nudge;
-            moved = true;
-            break;
-        case Key::UP:
-            layer->transform.position.y -= nudge;
-            moved = true;
-            break;
-        case Key::RIGHT:
-            layer->transform.position.x += nudge;
-            moved = true;
-            break;
-        case Key::DOWN:
-            layer->transform.position.y += nudge;
-            moved = true;
-            break;
+        case Key::LEFT:  dx = -nudge; moved = true; break;
+        case Key::UP:    dy = -nudge; moved = true; break;
+        case Key::RIGHT: dx = nudge;  moved = true; break;
+        case Key::DOWN:  dy = nudge;  moved = true; break;
         case Key::ESCAPE:
-            layer->transform = Transform::identity();
+            // Cancel floating content or reset layer transform
+            if (doc.floatingContent.active && floatingPixels) {
+                // Cancel - put pixels back at original position
+                PixelLayer* pixelLayer = doc.getActivePixelLayer();
+                if (pixelLayer) {
+                    Recti origBounds = doc.floatingContent.originalBounds;
+                    for (i32 y = 0; y < static_cast<i32>(floatingPixels->height); ++y) {
+                        for (i32 x = 0; x < static_cast<i32>(floatingPixels->width); ++x) {
+                            u32 pixel = floatingPixels->getPixel(x, y);
+                            if ((pixel & 0xFF) > 0) {
+                                i32 destX = origBounds.x + x;
+                                i32 destY = origBounds.y + y;
+                                if (destX >= 0 && destY >= 0 &&
+                                    destX < static_cast<i32>(pixelLayer->canvas.width) &&
+                                    destY < static_cast<i32>(pixelLayer->canvas.height)) {
+                                    pixelLayer->canvas.setPixel(destX, destY, pixel);
+                                }
+                            }
+                        }
+                    }
+                }
+                floatingPixels.reset();
+                doc.floatingContent.clear();
+                movingSelection = false;
+                movingContent = false;
+            } else {
+                layer->transform = Transform::identity();
+            }
             moved = true;
             break;
+    }
+
+    if (moved && (dx != 0 || dy != 0)) {
+        // Check if we have a selection to nudge
+        if (doc.selection.hasSelection && layer->isPixelLayer()) {
+            // If we have floating content, nudge it
+            if (doc.floatingContent.active) {
+                doc.floatingContent.currentOffset.x += dx;
+                doc.floatingContent.currentOffset.y += dy;
+            } else {
+                // Lift and nudge the selection content
+                PixelLayer* pixelLayer = static_cast<PixelLayer*>(layer);
+                Recti selBounds = doc.selection.bounds;
+                floatingPixels = std::make_unique<TiledCanvas>(selBounds.w, selBounds.h);
+                floatingOrigin = selBounds;
+
+                // Copy selected pixels and clear them from layer
+                for (i32 y = selBounds.y; y < selBounds.y + selBounds.h; ++y) {
+                    for (i32 x = selBounds.x; x < selBounds.x + selBounds.w; ++x) {
+                        if (x >= 0 && y >= 0 &&
+                            x < static_cast<i32>(doc.width) && y < static_cast<i32>(doc.height) &&
+                            doc.selection.isSelected(x, y)) {
+                            u32 pixel = pixelLayer->canvas.getPixel(x, y);
+                            if ((pixel & 0xFF) > 0) {
+                                floatingPixels->setPixel(x - selBounds.x, y - selBounds.y, pixel);
+                                pixelLayer->canvas.setPixel(x, y, 0);
+                            }
+                        }
+                    }
+                }
+
+                doc.floatingContent.pixels = floatingPixels.get();
+                doc.floatingContent.originalBounds = selBounds;
+                doc.floatingContent.currentOffset = Vec2(dx, dy);
+                doc.floatingContent.sourceLayer = pixelLayer;
+                doc.floatingContent.active = true;
+                movingSelection = true;
+                movingContent = true;
+            }
+            // Move selection mask too
+            doc.selection.offset(dx, dy);
+        } else {
+            // Nudge layer position
+            layer->transform.position.x += dx;
+            layer->transform.position.y += dy;
+        }
     }
 
     if (moved) {
@@ -473,8 +672,22 @@ void MoveTool::renderOverlay(Framebuffer& fb, const Vec2& cursorPos, f32 zoom, c
     Document* doc = state.activeDocument;
     if (!doc) return;
 
+    // Don't draw layer bounds when there's a selection - we only move selections, can't rotate/scale
+    if (doc->selection.hasSelection) {
+        return;
+    }
+
     LayerBase* layer = doc->getActiveLayer();
     if (!layer) return;
+
+    // Initialize pivot if this is a new layer (so it renders at content center immediately)
+    if (layer != lastInitializedLayer) {
+        if (layer->isPixelLayer()) {
+            initializePivotToContentCenter(static_cast<PixelLayer*>(layer));
+        } else if (layer->isTextLayer()) {
+            initializePivotToContentCenter(static_cast<TextLayer*>(layer));
+        }
+    }
 
     // Update corners
     if (layer->isPixelLayer()) {
@@ -588,20 +801,44 @@ void MoveTool::renderOverlay(Framebuffer& fb, const Vec2& cursorPos, f32 zoom, c
     }
 
     if (drawPivot) {
-        // Draw crosshair
-        fb.drawLine(px - pivotSize, py, px + pivotSize, py, handleBorder);
-        fb.drawLine(px, py - pivotSize, px, py + pivotSize, handleBorder);
+        // Draw pivot with black/white contrast for visibility
+        u32 pivotWhite = 0xFFFFFFFF;
+        u32 pivotBlack = 0x000000FF;
+        i32 circleRadius = pivotSize;
 
-        // Draw circle (approximated with lines)
-        i32 circleRadius = pivotSize - 2;
-        for (i32 j = 0; j < 16; ++j) {
-            f32 a1 = (j / 16.0f) * TAU;
-            f32 a2 = ((j + 1) / 16.0f) * TAU;
-            i32 x1 = px + static_cast<i32>(std::cos(a1) * circleRadius);
-            i32 y1 = py + static_cast<i32>(std::sin(a1) * circleRadius);
-            i32 x2 = px + static_cast<i32>(std::cos(a2) * circleRadius);
-            i32 y2 = py + static_cast<i32>(std::sin(a2) * circleRadius);
-            fb.drawLine(x1, y1, x2, y2, lineColor);
+        // Draw thick white circle (outer)
+        for (i32 r = circleRadius; r <= circleRadius + 2; ++r) {
+            for (i32 j = 0; j < 24; ++j) {
+                f32 a1 = (j / 24.0f) * TAU;
+                f32 a2 = ((j + 1) / 24.0f) * TAU;
+                i32 x1 = px + static_cast<i32>(std::cos(a1) * r);
+                i32 y1 = py + static_cast<i32>(std::sin(a1) * r);
+                i32 x2 = px + static_cast<i32>(std::cos(a2) * r);
+                i32 y2 = py + static_cast<i32>(std::sin(a2) * r);
+                fb.drawLine(x1, y1, x2, y2, pivotWhite);
+            }
         }
+
+        // Draw thick black circle (inner)
+        for (i32 r = circleRadius - 2; r <= circleRadius; ++r) {
+            for (i32 j = 0; j < 24; ++j) {
+                f32 a1 = (j / 24.0f) * TAU;
+                f32 a2 = ((j + 1) / 24.0f) * TAU;
+                i32 x1 = px + static_cast<i32>(std::cos(a1) * r);
+                i32 y1 = py + static_cast<i32>(std::sin(a1) * r);
+                i32 x2 = px + static_cast<i32>(std::cos(a2) * r);
+                i32 y2 = py + static_cast<i32>(std::sin(a2) * r);
+                fb.drawLine(x1, y1, x2, y2, pivotBlack);
+            }
+        }
+
+        // Draw thick crosshair - white outline
+        for (i32 offset = -1; offset <= 1; ++offset) {
+            fb.drawLine(px - pivotSize - 2, py + offset, px + pivotSize + 2, py + offset, pivotWhite);
+            fb.drawLine(px + offset, py - pivotSize - 2, px + offset, py + pivotSize + 2, pivotWhite);
+        }
+        // Black center
+        fb.drawLine(px - pivotSize, py, px + pivotSize, py, pivotBlack);
+        fb.drawLine(px, py - pivotSize, px, py + pivotSize, pivotBlack);
     }
 }

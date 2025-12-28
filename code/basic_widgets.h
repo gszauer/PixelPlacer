@@ -222,6 +222,86 @@ private:
     void updateValueFromMouse(f32 x);
 };
 
+// Forward declaration
+class NumberSlider;
+
+// Popup slider for NumberSlider
+class NumberSliderPopup : public Widget {
+public:
+    NumberSlider* owner = nullptr;
+    bool dragging = false;
+
+    u32 bgColor = Config::COLOR_PANEL;
+    u32 trackColor = Config::COLOR_INPUT;
+    u32 fillColor = Config::GRAY_500;
+    u32 thumbColor = Config::GRAY_600;
+    u32 borderColor = Config::COLOR_BORDER;
+
+    NumberSliderPopup();
+
+    void renderSelf(Framebuffer& fb) override;
+    bool onMouseDown(const MouseEvent& e) override;
+    bool onMouseDrag(const MouseEvent& e) override;
+    bool onMouseUp(const MouseEvent& e) override;
+
+private:
+    void updateValueFromMouse(f32 x);
+};
+
+// Number input with popup slider
+class NumberSlider : public Widget {
+public:
+    f32 value = 50.0f;
+    f32 minValue = 1.0f;
+    f32 maxValue = 100.0f;
+    bool minUnbound = false;
+    bool maxUnbound = false;
+    i32 decimals = 0;           // 0 = integer display
+    std::string suffix;         // e.g., "px", "%"
+
+    std::string editText;       // Text being edited
+    i32 cursorPos = 0;
+    i32 selectionStart = -1;    // Selection start (-1 = no selection)
+    bool editing = false;
+    bool showCursor = true;
+    bool draggingSelection = false;
+    u64 cursorBlinkTime = 0;
+
+    u32 bgColor = Config::COLOR_INPUT;
+    u32 textColor = Config::COLOR_TEXT;
+    u32 borderColor = Config::COLOR_BORDER;
+    u32 focusBorderColor = Config::COLOR_FOCUS;
+
+    std::function<void(f32)> onChanged;
+
+    std::unique_ptr<NumberSliderPopup> popup;
+
+    NumberSlider();
+    NumberSlider(f32 min, f32 max, f32 initial, i32 decimalPlaces = 0);
+
+    void setValue(f32 v);
+    f32 getNormalizedValue() const;
+    std::string getDisplayText() const;
+
+    void showPopup();
+    void hidePopup();
+    void commitEdit();
+
+    void renderSelf(Framebuffer& fb) override;
+    bool onMouseDown(const MouseEvent& e) override;
+    bool onMouseDrag(const MouseEvent& e) override;
+    bool onMouseUp(const MouseEvent& e) override;
+    bool onKeyDown(const KeyEvent& e) override;
+    bool onTextInput(const std::string& input) override;
+    void onFocus() override;
+    void onBlur() override;
+
+private:
+    bool hasSelection() const { return selectionStart >= 0 && selectionStart != cursorPos; }
+    void deleteSelection();
+    i32 positionFromX(f32 localX);
+};
+
 // Text field (single line)
 class TextField : public Widget {
 public:

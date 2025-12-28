@@ -85,6 +85,8 @@ namespace Config {
     constexpr u32 COLOR_PANEL               = GRAY_200;  // Sidebars, panels
     constexpr u32 COLOR_PANEL_HEADER        = GRAY_300;  // Panel headers
     constexpr u32 COLOR_BORDER              = GRAY_500;  // Visible borders
+    constexpr u32 COLOR_RESIZER             = 0x1E1E1EFF;  // Panel resizers
+    constexpr u32 COLOR_RESIZER_HOVER       = 0x262626FF;  // Resizer hover/drag
 
     // Interactive elements (buttons stand out from panels)
     constexpr u32 COLOR_BUTTON              = GRAY_400;  // Default button

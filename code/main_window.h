@@ -101,11 +101,11 @@ public:
     bool pendingRebuild = false;  // Defer rebuild to avoid destroying widgets during callbacks
 
     // Common widget references (may be null depending on tool)
-    Slider* sizeSlider = nullptr;
+    NumberSlider* sizeSlider = nullptr;
     Label* hardnessLabel = nullptr;
-    Slider* hardnessSlider = nullptr;
-    Slider* opacitySlider = nullptr;
-    Slider* toleranceSlider = nullptr;
+    NumberSlider* hardnessSlider = nullptr;
+    NumberSlider* opacitySlider = nullptr;
+    NumberSlider* toleranceSlider = nullptr;
     Checkbox* contiguousCheck = nullptr;
     Checkbox* antiAliasCheck = nullptr;
     ComboBox* shapeCombo = nullptr;
@@ -137,7 +137,7 @@ public:
     Checkbox* sampleModeCheck = nullptr;
 
     // Dynamic sizing constants and helpers
-    static constexpr f32 TOOLBAR_LABEL_PADDING = 4.0f;
+    static constexpr f32 TOOLBAR_LABEL_PADDING = 6.0f;
     static constexpr f32 TOOLBAR_BTN_PADDING = 14.0f;
     static constexpr f32 TOOLBAR_ITEM_SPACING = 4.0f;
     static constexpr f32 TOOLBAR_GROUP_SPACING = 4.0f;
@@ -150,7 +150,10 @@ public:
         auto* label = layout->createChild<Label>(text);
         Vec2 textSize = FontRenderer::instance().measureText(text, Config::defaultFontSize());
         f32 padding = TOOLBAR_LABEL_PADDING * Config::uiScale;
-        label->preferredSize = Vec2(textSize.x + padding * 2, itemHeight());
+        Vec2 size = Vec2(textSize.x + padding * 2, itemHeight());
+        label->preferredSize = size;
+        label->minSize = size;  // Prevent shrinking below text width
+        label->horizontalPolicy = SizePolicy::Fixed;
         return label;
     }
 
@@ -173,6 +176,12 @@ public:
     Slider* addSlider(f32 min, f32 max, f32 value, f32 width = 80.0f) {
         auto* slider = layout->createChild<Slider>(min, max, value);
         slider->preferredSize = Vec2(width * Config::uiScale, sliderHeight());
+        return slider;
+    }
+
+    NumberSlider* addNumberSlider(f32 min, f32 max, f32 value, i32 decimals = 0, f32 width = 50.0f) {
+        auto* slider = layout->createChild<NumberSlider>(min, max, value, decimals);
+        slider->preferredSize = Vec2(width * Config::uiScale, itemHeight());
         return slider;
     }
 

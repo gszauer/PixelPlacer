@@ -508,6 +508,37 @@ void Document::rasterizePixelLayerTransform(i32 layerIndex) {
 }
 
 void Document::setTool(std::unique_ptr<Tool> tool) {
+    // Commit any floating content before switching tools
+    if (floatingContent.active && floatingContent.pixels) {
+        PixelLayer* layer = getActivePixelLayer();
+        if (layer) {
+            // Calculate final position
+            i32 offsetX = static_cast<i32>(std::round(floatingContent.currentOffset.x));
+            i32 offsetY = static_cast<i32>(std::round(floatingContent.currentOffset.y));
+
+            // Paste floating pixels back to layer at new position
+            Recti origBounds = floatingContent.originalBounds;
+            for (i32 y = 0; y < static_cast<i32>(floatingContent.pixels->height); ++y) {
+                for (i32 x = 0; x < static_cast<i32>(floatingContent.pixels->width); ++x) {
+                    u32 pixel = floatingContent.pixels->getPixel(x, y);
+                    if ((pixel & 0xFF) > 0) {
+                        i32 destX = origBounds.x + x + offsetX;
+                        i32 destY = origBounds.y + y + offsetY;
+                        if (destX >= 0 && destY >= 0 &&
+                            destX < static_cast<i32>(layer->canvas.width) &&
+                            destY < static_cast<i32>(layer->canvas.height)) {
+                            layer->canvas.setPixel(destX, destY, pixel);
+                        }
+                    }
+                }
+            }
+
+            // Move the selection mask to match
+            selection.offset(offsetX, offsetY);
+        }
+        floatingContent.clear();
+    }
+
     currentTool = std::move(tool);
 }
 

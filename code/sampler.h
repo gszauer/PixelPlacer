@@ -22,7 +22,7 @@ namespace Sampler {
         return canvas.getPixel(ix, iy);
     }
 
-    // Bilinear interpolation with edge extension
+    // Bilinear interpolation (transparent outside bounds)
     inline u32 sampleBilinear(const TiledCanvas& canvas, f32 x, f32 y) {
         f32 fx = std::floor(x);
         f32 fy = std::floor(y);
@@ -34,19 +34,20 @@ namespace Sampler {
         i32 x1 = x0 + 1;
         i32 y1 = y0 + 1;
 
-        // Clamp to canvas bounds (edge extension) to avoid blending with transparent out-of-bounds pixels
-        i32 maxX = static_cast<i32>(canvas.width) - 1;
-        i32 maxY = static_cast<i32>(canvas.height) - 1;
-        i32 cx0 = clamp(x0, 0, maxX);
-        i32 cy0 = clamp(y0, 0, maxY);
-        i32 cx1 = clamp(x1, 0, maxX);
-        i32 cy1 = clamp(y1, 0, maxY);
+        i32 w = static_cast<i32>(canvas.width);
+        i32 h = static_cast<i32>(canvas.height);
 
-        // Get four corner pixels with edge extension
-        u32 c00 = canvas.getPixel(cx0, cy0);
-        u32 c10 = canvas.getPixel(cx1, cy0);
-        u32 c01 = canvas.getPixel(cx0, cy1);
-        u32 c11 = canvas.getPixel(cx1, cy1);
+        // Helper to get pixel or transparent if out of bounds
+        auto getPixelSafe = [&](i32 px, i32 py) -> u32 {
+            if (px < 0 || py < 0 || px >= w || py >= h) return 0;
+            return canvas.getPixel(px, py);
+        };
+
+        // Get four corner pixels (transparent if out of bounds)
+        u32 c00 = getPixelSafe(x0, y0);
+        u32 c10 = getPixelSafe(x1, y0);
+        u32 c01 = getPixelSafe(x0, y1);
+        u32 c11 = getPixelSafe(x1, y1);
 
         // Interpolate each channel
         u8 r00, g00, b00, a00;
@@ -92,8 +93,8 @@ namespace Sampler {
         f32 fx = x - ix;
         f32 fy = y - iy;
 
-        i32 maxX = static_cast<i32>(canvas.width) - 1;
-        i32 maxY = static_cast<i32>(canvas.height) - 1;
+        i32 w = static_cast<i32>(canvas.width);
+        i32 h = static_cast<i32>(canvas.height);
 
         f32 r = 0, g = 0, b = 0, a = 0;
 
@@ -101,19 +102,24 @@ namespace Sampler {
             f32 wy = cubicWeight(fy - dy);
             for (i32 dx = -1; dx <= 2; ++dx) {
                 f32 wx = cubicWeight(fx - dx);
-                f32 w = wx * wy;
+                f32 wt = wx * wy;
 
-                // Clamp to canvas bounds (edge extension)
-                i32 sx = clamp(ix + dx, 0, maxX);
-                i32 sy = clamp(iy + dy, 0, maxY);
-                u32 pixel = canvas.getPixel(sx, sy);
+                i32 sx = ix + dx;
+                i32 sy = iy + dy;
+
+                // Return transparent for out-of-bounds pixels
+                u32 pixel = 0;
+                if (sx >= 0 && sy >= 0 && sx < w && sy < h) {
+                    pixel = canvas.getPixel(sx, sy);
+                }
+
                 u8 pr, pg, pb, pa;
                 Blend::unpack(pixel, pr, pg, pb, pa);
 
-                r += pr * w;
-                g += pg * w;
-                b += pb * w;
-                a += pa * w;
+                r += pr * wt;
+                g += pg * wt;
+                b += pb * wt;
+                a += pa * wt;
             }
         }
 

@@ -668,7 +668,8 @@ void LayerPropsPanel::buildPixelLayerControls(PixelLayer* layer) {
 
     std::string sizeStr = "Size: " + std::to_string(layer->canvas.width) + " x " +
                           std::to_string(layer->canvas.height);
-    infoRow->createChild<Label>(sizeStr);
+    auto* sizeLabel = infoRow->createChild<Label>(sizeStr);
+    sizeLabel->horizontalPolicy = SizePolicy::Expanding;
 }
 
 void LayerPropsPanel::buildTextLayerControls(TextLayer* layer) {
@@ -700,9 +701,10 @@ void LayerPropsPanel::buildTextLayerControls(TextLayer* layer) {
     sizeRow->verticalPolicy = SizePolicy::Fixed;
 
     sizeRow->createChild<Label>("Size")->preferredSize = Vec2(50 * Config::uiScale, 24 * Config::uiScale);
-    auto sizeSlider = sizeRow->createChild<Slider>(1.0f, 200.0f, static_cast<f32>(layer->fontSize));
-    sizeSlider->horizontalPolicy = SizePolicy::Expanding;
-    sizeSlider->onChanged = [this, layer](f32 value) {
+    auto sizeInput = sizeRow->createChild<NumberSlider>(1.0f, 200.0f, static_cast<f32>(layer->fontSize), 0);
+    sizeInput->suffix = "px";
+    sizeInput->preferredSize = Vec2(70 * Config::uiScale, 24 * Config::uiScale);
+    sizeInput->onChanged = [this, layer](f32 value) {
         if (layer->locked) return;
         layer->fontSize = static_cast<u32>(value);
         layer->invalidateCache();

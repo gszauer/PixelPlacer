@@ -11,20 +11,20 @@ This file contains instructions for AI agents (Claude Code, Cursor, etc.) workin
 ```
 
 ### Key Directories
-- All source files are in the root directory (no subdirectories)
-- Headers: `*.h`
-- Implementations: `*.cpp`
-- Build output: `pixelplacer`, `pixelplacer_debug`
+- All source files are in the `code/` directory
+- Headers: `code/*.h`
+- Implementations: `code/*.cpp`
+- Build output: `pixelplacer`, `pixelplacer_debug` (in root)
 
 ### Most Frequently Modified Files
 | Task | Primary Files |
 |------|--------------|
-| UI changes | `main_window.cpp`, `panels.cpp`, `basic_widgets.cpp` |
-| Tool behavior | `tool.cpp`, `brush_tool.cpp`, `selection_tools.cpp` |
-| Document operations | `document.cpp`, `layer.h` |
-| Rendering | `compositor.cpp`, `framebuffer.cpp` |
-| Configuration | `config.h` |
-| Application lifecycle | `application.cpp` |
+| UI changes | `code/main_window.cpp`, `code/panels.cpp`, `code/basic_widgets.cpp` |
+| Tool behavior | `code/tool.cpp`, `code/brush_tool.cpp`, `code/selection_tools.cpp` |
+| Document operations | `code/document.cpp`, `code/layer.h` |
+| Rendering | `code/compositor.cpp`, `code/framebuffer.cpp` |
+| Configuration | `code/config.h` |
+| Application lifecycle | `code/application.cpp` |
 
 ---
 
@@ -89,8 +89,8 @@ Full list: `i8`, `u8`, `i16`, `u16`, `i32`, `u32`, `i64`, `u64`, `f32`, `f64`
 
 This project uses unity build. Key points:
 
-1. **Only `main.cpp` is compiled** - all other `.cpp` files are `#include`d
-2. **Adding a new .cpp file requires updating `main.cpp`**:
+1. **Only `code/main.cpp` is compiled** - all other `.cpp` files are `#include`d
+2. **Adding a new .cpp file requires updating `code/main.cpp`**:
    ```cpp
    #ifdef UNITY_BUILD
    // ... existing includes ...
@@ -102,8 +102,8 @@ This project uses unity build. Key points:
 
 ### When Adding New Files
 
-1. Create both `.h` and `.cpp` files
-2. Add `#include "myfile.cpp"` to `main.cpp` in the `UNITY_BUILD` block
+1. Create both `.h` and `.cpp` files in the `code/` directory
+2. Add `#include "myfile.cpp"` to `code/main.cpp` in the `UNITY_BUILD` block
 3. Place include after any dependencies
 4. Test build immediately
 
@@ -113,9 +113,9 @@ This project uses unity build. Key points:
 
 ### Adding a New Tool
 
-1. **Create files**: `my_tool.h`, `my_tool.cpp`
+1. **Create files**: `code/my_tool.h`, `code/my_tool.cpp`
 
-2. **Add to ToolType enum** (`tool.h`):
+2. **Add to ToolType enum** (`code/tool.h`):
    ```cpp
    enum class ToolType {
        // ... existing ...
@@ -145,17 +145,17 @@ This project uses unity build. Key points:
    #endif
    ```
 
-4. **Add to unity build** (`main.cpp`):
+4. **Add to unity build** (`code/main.cpp`):
    ```cpp
    #include "my_tool.cpp"
    ```
 
-5. **Add toolbar button** (`main_window.cpp` in `ToolPalette` constructor):
+5. **Add toolbar button** (`code/main_window.cpp` in `ToolPalette` constructor):
    ```cpp
    addToolButton(ToolType::MyTool, "icon_name", "My Tool");
    ```
 
-6. **Add tool options** (`main_window.cpp` in `ToolOptionsBar::rebuildOptions()`):
+6. **Add tool options** (`code/main_window.cpp` in `ToolOptionsBar::rebuildOptions()`):
    ```cpp
    case ToolType::MyTool:
        buildMyToolOptions();
@@ -164,7 +164,7 @@ This project uses unity build. Key points:
 
 ### Adding a New Widget
 
-1. **Add to `basic_widgets.h`** or create new header:
+1. **Add to `code/basic_widgets.h`** or create new header:
    ```cpp
    class MyWidget : public Widget {
    public:
@@ -176,7 +176,7 @@ This project uses unity build. Key points:
    };
    ```
 
-2. **Implement in `basic_widgets.cpp`** or new `.cpp`:
+2. **Implement in `code/basic_widgets.cpp`** or new `.cpp`:
    ```cpp
    MyWidget::MyWidget() {
        preferredSize = Vec2(100 * Config::uiScale, 30 * Config::uiScale);
@@ -196,7 +196,7 @@ This project uses unity build. Key points:
 
 ### Adding a Menu Item
 
-In `main_window.cpp`, find the appropriate `create*Menu()` function:
+In `code/main_window.cpp`, find the appropriate `create*Menu()` function:
 
 ```cpp
 PopupMenu* MenuBar::createEditMenu() {
@@ -214,7 +214,7 @@ PopupMenu* MenuBar::createEditMenu() {
 
 ### Adding an Adjustment Type
 
-1. **Add enum value** (`layer.h`):
+1. **Add enum value** (`code/layer.h`):
    ```cpp
    enum class AdjustmentType {
        // ... existing ...
@@ -222,7 +222,7 @@ PopupMenu* MenuBar::createEditMenu() {
    };
    ```
 
-2. **Create parameter struct** (`layer.h`):
+2. **Create parameter struct** (`code/layer.h`):
    ```cpp
    struct MyAdjustmentParams {
        f32 amount = 0.0f;
@@ -230,7 +230,7 @@ PopupMenu* MenuBar::createEditMenu() {
    };
    ```
 
-3. **Add to variant** (`layer.h`):
+3. **Add to variant** (`code/layer.h`):
    ```cpp
    using AdjustmentParams = std::variant<
        // ... existing ...
@@ -238,7 +238,7 @@ PopupMenu* MenuBar::createEditMenu() {
    >;
    ```
 
-4. **Set defaults** (`layer.cpp`):
+4. **Set defaults** (`code/layer.cpp`):
    ```cpp
    void AdjustmentLayer::setDefaultParams() {
        switch (type) {
@@ -250,7 +250,7 @@ PopupMenu* MenuBar::createEditMenu() {
    }
    ```
 
-5. **Apply effect** (`compositor.cpp`):
+5. **Apply effect** (`code/compositor.cpp`):
    ```cpp
    u32 applyAdjustment(u32 pixel, const AdjustmentLayer& adj) {
        switch (adj.type) {
@@ -264,7 +264,7 @@ PopupMenu* MenuBar::createEditMenu() {
    }
    ```
 
-6. **Add UI** (`panels.cpp` in `LayerPropsPanel`):
+6. **Add UI** (`code/panels.cpp` in `LayerPropsPanel`):
    ```cpp
    void LayerPropsPanel::buildMyAdjustmentControls(AdjustmentLayer* layer) {
        auto* params = getAdjustmentParams<MyAdjustmentParams>(layer);
@@ -282,11 +282,11 @@ PopupMenu* MenuBar::createEditMenu() {
 
 ### 1. Forgetting Unity Build Include
 **Symptom**: Linker errors about undefined symbols
-**Fix**: Add `#include "newfile.cpp"` to `main.cpp`
+**Fix**: Add `#include "newfile.cpp"` to `code/main.cpp`
 
 ### 2. Wrong Include Order
 **Symptom**: Compilation errors about unknown types
-**Fix**: Ensure dependencies are included first in `main.cpp`
+**Fix**: Ensure dependencies are included first in `code/main.cpp`
 
 ### 3. Using Wrong Type Aliases
 **Symptom**: Style inconsistency
@@ -342,9 +342,9 @@ menu->addItem("Action", "", [this]() {
 - [ ] Update forward declarations if adding new types
 
 ### When Adding New Files
-- [ ] Create both `.h` and `.cpp`
+- [ ] Create both `.h` and `.cpp` in `code/` directory
 - [ ] Use correct include guard format: `_H_FILENAME_`
-- [ ] Add to `main.cpp` unity build block
+- [ ] Add to `code/main.cpp` unity build block
 - [ ] Place in correct order (after dependencies)
 - [ ] Rebuild and test
 
@@ -364,7 +364,7 @@ menu->addItem("Action", "", [this]() {
 ## Debugging Tips
 
 ### Build Errors
-1. Check `main.cpp` for missing includes
+1. Check `code/main.cpp` for missing includes
 2. Verify include guard format
 3. Check for circular dependencies
 
