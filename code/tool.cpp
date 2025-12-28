@@ -421,19 +421,36 @@ void MoveTool::onMouseDrag(Document& doc, const ToolEvent& e) {
         }
 
         case TransformHandle::Pivot: {
-            // Moving the pivot point
-            // Calculate new pivot in normalized coordinates
+            // Moving the pivot point - must compensate position to keep visual unchanged
             f32 w = canvasWidth;
             f32 h = canvasHeight;
             if (w > 0 && h > 0) {
-                // Transform mouse position back to layer space
-                Matrix3x2 mat = originalTransform.toMatrix(w, h);
-                Matrix3x2 invMat = mat.inverted();
+                // Get old pivot in local coordinates
+                Vec2 oldPivotLocal(layer->transform.pivot.x * w, layer->transform.pivot.y * h);
+
+                // Get current transform matrix and where old pivot is in world space
+                Matrix3x2 oldMat = layer->transform.toMatrix(w, h);
+                Vec2 oldPivotWorld = oldMat.transform(oldPivotLocal);
+
+                // Transform mouse position back to layer space to get new pivot
+                Matrix3x2 invMat = oldMat.inverted();
                 Vec2 localPos = invMat.transform(e.position);
 
-                // Clamp to canvas bounds and normalize
-                layer->transform.pivot.x = clamp(localPos.x / w, 0.0f, 1.0f);
-                layer->transform.pivot.y = clamp(localPos.y / h, 0.0f, 1.0f);
+                // Calculate new pivot (clamped and normalized)
+                Vec2 newPivot(
+                    clamp(localPos.x / w, 0.0f, 1.0f),
+                    clamp(localPos.y / h, 0.0f, 1.0f)
+                );
+
+                // Apply new pivot
+                layer->transform.pivot = newPivot;
+
+                // Calculate where old pivot point would now be with new pivot
+                Matrix3x2 newMat = layer->transform.toMatrix(w, h);
+                Vec2 oldPivotNewWorld = newMat.transform(oldPivotLocal);
+
+                // Compensate position to keep the visual in place
+                layer->transform.position += oldPivotWorld - oldPivotNewWorld;
 
                 // Update pivot position for display
                 pivotPos = e.position;
