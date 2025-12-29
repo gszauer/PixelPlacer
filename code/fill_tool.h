@@ -6,6 +6,7 @@
 #include <queue>
 #include <cmath>
 #include <limits>
+#include <unordered_set>
 
 class FillTool : public Tool {
 public:
@@ -27,6 +28,15 @@ private:
                            const Selection* sel = nullptr,
                            i32 layerOffsetX = 0, i32 layerOffsetY = 0,
                            i32 docWidth = 0, i32 docHeight = 0);
+
+    // Transform-aware fill functions
+    static void floodFillTransformed(TiledCanvas& canvas, i32 startX, i32 startY,
+                                     u32 targetColor, u32 fillColor, f32 tolerance,
+                                     const Selection* sel, const Matrix3x2& layerToDoc);
+
+    static void globalFillTransformed(TiledCanvas& canvas, u32 targetColor, u32 fillColor,
+                                      f32 tolerance, const Selection* sel,
+                                      const Matrix3x2& layerToDoc);
 };
 
 #endif

@@ -1425,6 +1425,12 @@ LayerPropsPanel::LayerPropsPanel() {
     typeSpecificContainer = scrollContent->createChild<VBoxLayout>(4 * Config::uiScale);
 }
 
+LayerPropsPanel::~LayerPropsPanel() {
+    if (document) {
+        document->removeObserver(this);
+    }
+}
+
 void LayerPropsPanel::setDocument(Document* doc) {
     if (document) {
         document->removeObserver(this);
@@ -1764,6 +1770,12 @@ LayerPanel::LayerPanel() {
             getAppState().needsRedraw = true;
         }
     };
+}
+
+LayerPanel::~LayerPanel() {
+    if (document) {
+        document->removeObserver(this);
+    }
 }
 
 void LayerPanel::setDocument(Document* doc) {

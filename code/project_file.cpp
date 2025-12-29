@@ -2,54 +2,96 @@
 #include "layer.h"
 #include "blend.h"
 #include "platform.h"
-#include <fstream>
 #include <cstring>
 
 namespace ProjectFile {
 
-// Helper to write primitives
-template<typename T>
-void writeValue(std::ostream& out, T value) {
-    out.write(reinterpret_cast<const char*>(&value), sizeof(T));
-}
+// Simple buffer writer for binary serialization
+class BufferWriter {
+    std::vector<u8>& buffer;
+public:
+    explicit BufferWriter(std::vector<u8>& buf) : buffer(buf) {}
 
-template<typename T>
-T readValue(std::istream& in) {
-    T value;
-    in.read(reinterpret_cast<char*>(&value), sizeof(T));
-    return value;
-}
+    template<typename T>
+    void write(T value) {
+        const u8* ptr = reinterpret_cast<const u8*>(&value);
+        buffer.insert(buffer.end(), ptr, ptr + sizeof(T));
+    }
 
-void writeString(std::ostream& out, const std::string& str) {
-    u32 len = str.size();
-    writeValue(out, len);
-    out.write(str.c_str(), len);
-}
+    void writeBytes(const void* data, size_t size) {
+        const u8* ptr = static_cast<const u8*>(data);
+        buffer.insert(buffer.end(), ptr, ptr + size);
+    }
 
-std::string readString(std::istream& in) {
-    u32 len = readValue<u32>(in);
-    std::string str(len, '\0');
-    in.read(&str[0], len);
-    return str;
-}
+    void writeString(const std::string& str) {
+        write(static_cast<u32>(str.size()));
+        writeBytes(str.data(), str.size());
+    }
+};
+
+// Simple buffer reader for binary deserialization
+class BufferReader {
+    const u8* data;
+    size_t size;
+    size_t pos = 0;
+public:
+    BufferReader(const u8* d, size_t s) : data(d), size(s) {}
+    BufferReader(const std::vector<u8>& buf) : data(buf.data()), size(buf.size()) {}
+
+    bool good() const { return pos <= size; }
+    bool eof() const { return pos >= size; }
+
+    template<typename T>
+    T read() {
+        if (pos + sizeof(T) > size) {
+            pos = size + 1;  // Mark as bad
+            return T{};
+        }
+        T value;
+        std::memcpy(&value, data + pos, sizeof(T));
+        pos += sizeof(T);
+        return value;
+    }
+
+    void readBytes(void* dest, size_t count) {
+        if (pos + count > size) {
+            pos = size + 1;
+            return;
+        }
+        std::memcpy(dest, data + pos, count);
+        pos += count;
+    }
+
+    std::string readString() {
+        u32 len = read<u32>();
+        if (!good() || pos + len > size) {
+            pos = size + 1;
+            return "";
+        }
+        std::string str(reinterpret_cast<const char*>(data + pos), len);
+        pos += len;
+        return str;
+    }
+};
 
 bool save(const std::string& path, const Document& doc) {
-    std::ofstream file(path, std::ios::binary);
-    if (!file.is_open()) return false;
+    std::vector<u8> buffer;
+    buffer.reserve(1024 * 1024);  // Pre-allocate 1MB
+    BufferWriter writer(buffer);
 
     // Header
-    writeValue(file, MAGIC);
-    writeValue(file, VERSION);
-    writeValue(file, doc.width);
-    writeValue(file, doc.height);
-    writeValue(file, static_cast<u32>(doc.layers.size()));
+    writer.write(MAGIC);
+    writer.write(VERSION);
+    writer.write(doc.width);
+    writer.write(doc.height);
+    writer.write(static_cast<u32>(doc.layers.size()));
 
     // Embedded fonts (VERSION 2+)
-    writeValue(file, static_cast<u32>(doc.embeddedFonts.size()));
+    writer.write(static_cast<u32>(doc.embeddedFonts.size()));
     for (const auto& [fontName, fontData] : doc.embeddedFonts) {
-        writeString(file, fontName);
-        writeValue(file, static_cast<u32>(fontData.size()));
-        file.write(reinterpret_cast<const char*>(fontData.data()), fontData.size());
+        writer.writeString(fontName);
+        writer.write(static_cast<u32>(fontData.size()));
+        writer.writeBytes(fontData.data(), fontData.size());
     }
 
     // Layers
@@ -59,131 +101,133 @@ bool save(const std::string& path, const Document& doc) {
         if (layer->isPixelLayer()) layerType = 0;
         else if (layer->isTextLayer()) layerType = 1;
         else if (layer->isAdjustmentLayer()) layerType = 2;
-        writeValue(file, layerType);
+        writer.write(layerType);
 
         // Common properties
-        writeString(file, layer->name);
-        writeValue(file, layer->visible);
-        writeValue(file, layer->locked);
-        writeValue(file, layer->opacity);
-        writeValue(file, static_cast<u8>(layer->blend));
-        writeValue(file, layer->transform.position.x);
-        writeValue(file, layer->transform.position.y);
-        writeValue(file, layer->transform.scale.x);
-        writeValue(file, layer->transform.scale.y);
-        writeValue(file, layer->transform.rotation);
+        writer.writeString(layer->name);
+        writer.write(layer->visible);
+        writer.write(layer->locked);
+        writer.write(layer->opacity);
+        writer.write(static_cast<u8>(layer->blend));
+        writer.write(layer->transform.position.x);
+        writer.write(layer->transform.position.y);
+        writer.write(layer->transform.scale.x);
+        writer.write(layer->transform.scale.y);
+        writer.write(layer->transform.rotation);
 
         if (layer->isPixelLayer()) {
             const PixelLayer* pixel = static_cast<const PixelLayer*>(layer.get());
             const TiledCanvas& canvas = pixel->canvas;
 
-            writeValue(file, static_cast<u32>(canvas.tiles.size()));
+            writer.write(static_cast<u32>(canvas.tiles.size()));
 
             for (const auto& [key, tile] : canvas.tiles) {
                 i32 tileX, tileY;
                 extractTileCoords(key, tileX, tileY);
-                writeValue(file, tileX);  // Signed coordinates
-                writeValue(file, tileY);  // Signed coordinates
-
-                // Write tile data
-                file.write(reinterpret_cast<const char*>(tile->pixels), sizeof(tile->pixels));
+                writer.write(tileX);
+                writer.write(tileY);
+                writer.writeBytes(tile->pixels, sizeof(tile->pixels));
             }
         }
         else if (layer->isTextLayer()) {
             const TextLayer* text = static_cast<const TextLayer*>(layer.get());
-            writeString(file, text->text);
-            writeString(file, text->fontFamily);
-            writeValue(file, text->fontSize);
-            writeValue(file, text->textColor.r);
-            writeValue(file, text->textColor.g);
-            writeValue(file, text->textColor.b);
-            writeValue(file, text->textColor.a);
-            writeValue(file, text->bold);
-            writeValue(file, text->italic);
+            writer.writeString(text->text);
+            writer.writeString(text->fontFamily);
+            writer.write(text->fontSize);
+            writer.write(text->textColor.r);
+            writer.write(text->textColor.g);
+            writer.write(text->textColor.b);
+            writer.write(text->textColor.a);
+            writer.write(text->bold);
+            writer.write(text->italic);
         }
         else if (layer->isAdjustmentLayer()) {
             const AdjustmentLayer* adj = static_cast<const AdjustmentLayer*>(layer.get());
-            writeValue(file, static_cast<u8>(adj->type));
-            // Write params based on type using variant visitor
-            std::visit([&file](const auto& p) {
+            writer.write(static_cast<u8>(adj->type));
+
+            std::visit([&writer](const auto& p) {
                 using T = std::decay_t<decltype(p)>;
                 if constexpr (std::is_same_v<T, BrightnessContrastParams>) {
-                    writeValue(file, p.brightness);
-                    writeValue(file, p.contrast);
+                    writer.write(p.brightness);
+                    writer.write(p.contrast);
                 }
                 else if constexpr (std::is_same_v<T, TemperatureTintParams>) {
-                    writeValue(file, p.temperature);
-                    writeValue(file, p.tint);
+                    writer.write(p.temperature);
+                    writer.write(p.tint);
                 }
                 else if constexpr (std::is_same_v<T, HueSaturationParams>) {
-                    writeValue(file, p.hue);
-                    writeValue(file, p.saturation);
-                    writeValue(file, p.lightness);
+                    writer.write(p.hue);
+                    writer.write(p.saturation);
+                    writer.write(p.lightness);
                 }
                 else if constexpr (std::is_same_v<T, VibranceParams>) {
-                    writeValue(file, p.vibrance);
+                    writer.write(p.vibrance);
                 }
                 else if constexpr (std::is_same_v<T, ColorBalanceParams>) {
-                    writeValue(file, p.shadowsCyanRed);
-                    writeValue(file, p.shadowsMagentaGreen);
-                    writeValue(file, p.shadowsYellowBlue);
-                    writeValue(file, p.midtonesCyanRed);
-                    writeValue(file, p.midtonesMagentaGreen);
-                    writeValue(file, p.midtonesYellowBlue);
-                    writeValue(file, p.highlightsCyanRed);
-                    writeValue(file, p.highlightsMagentaGreen);
-                    writeValue(file, p.highlightsYellowBlue);
+                    writer.write(p.shadowsCyanRed);
+                    writer.write(p.shadowsMagentaGreen);
+                    writer.write(p.shadowsYellowBlue);
+                    writer.write(p.midtonesCyanRed);
+                    writer.write(p.midtonesMagentaGreen);
+                    writer.write(p.midtonesYellowBlue);
+                    writer.write(p.highlightsCyanRed);
+                    writer.write(p.highlightsMagentaGreen);
+                    writer.write(p.highlightsYellowBlue);
                 }
                 else if constexpr (std::is_same_v<T, HighlightsShadowsParams>) {
-                    writeValue(file, p.highlights);
-                    writeValue(file, p.shadows);
+                    writer.write(p.highlights);
+                    writer.write(p.shadows);
                 }
                 else if constexpr (std::is_same_v<T, ExposureParams>) {
-                    writeValue(file, p.exposure);
-                    writeValue(file, p.offset);
-                    writeValue(file, p.gamma);
+                    writer.write(p.exposure);
+                    writer.write(p.offset);
+                    writer.write(p.gamma);
                 }
                 else if constexpr (std::is_same_v<T, LevelsParams>) {
-                    writeValue(file, p.inputBlack);
-                    writeValue(file, p.inputGamma);
-                    writeValue(file, p.inputWhite);
-                    writeValue(file, p.outputBlack);
-                    writeValue(file, p.outputWhite);
+                    writer.write(p.inputBlack);
+                    writer.write(p.inputGamma);
+                    writer.write(p.inputWhite);
+                    writer.write(p.outputBlack);
+                    writer.write(p.outputWhite);
                 }
                 else if constexpr (std::is_same_v<T, InvertParams>) {
                     // No parameters
                 }
                 else if constexpr (std::is_same_v<T, BlackAndWhiteParams>) {
-                    writeValue(file, p.reds);
-                    writeValue(file, p.yellows);
-                    writeValue(file, p.greens);
-                    writeValue(file, p.cyans);
-                    writeValue(file, p.blues);
-                    writeValue(file, p.magentas);
-                    writeValue(file, p.tintHue);
-                    writeValue(file, p.tintAmount);
+                    writer.write(p.reds);
+                    writer.write(p.yellows);
+                    writer.write(p.greens);
+                    writer.write(p.cyans);
+                    writer.write(p.blues);
+                    writer.write(p.magentas);
+                    writer.write(p.tintHue);
+                    writer.write(p.tintAmount);
                 }
             }, adj->params);
         }
     }
 
-    return file.good();
+    return Platform::writeFile(path, buffer.data(), buffer.size());
 }
 
 std::unique_ptr<Document> load(const std::string& path) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file.is_open()) return nullptr;
+    std::vector<u8> buffer = Platform::readFile(path);
+    if (buffer.empty()) return nullptr;
+
+    BufferReader reader(buffer);
 
     // Verify header
-    u32 magic = readValue<u32>(file);
+    u32 magic = reader.read<u32>();
     if (magic != MAGIC) return nullptr;
 
-    u32 version = readValue<u32>(file);
-    if (version > VERSION) return nullptr;  // Newer format
+    u32 version = reader.read<u32>();
+    if (version > VERSION) return nullptr;
 
-    u32 width = readValue<u32>(file);
-    u32 height = readValue<u32>(file);
-    u32 layerCount = readValue<u32>(file);
+    u32 width = reader.read<u32>();
+    u32 height = reader.read<u32>();
+    u32 layerCount = reader.read<u32>();
+
+    if (!reader.good()) return nullptr;
 
     auto doc = std::make_unique<Document>();
     doc->width = width;
@@ -191,141 +235,137 @@ std::unique_ptr<Document> load(const std::string& path) {
     doc->selection.resize(width, height);
     doc->filePath = path;
     doc->name = Platform::getFileName(path);
-    doc->layers.clear();  // Remove default layer
+    doc->layers.clear();
 
     // Read embedded fonts (VERSION 2+)
     if (version >= 2) {
-        u32 fontCount = readValue<u32>(file);
-        for (u32 f = 0; f < fontCount; ++f) {
-            std::string fontName = readString(file);
-            u32 dataSize = readValue<u32>(file);
+        u32 fontCount = reader.read<u32>();
+        for (u32 f = 0; f < fontCount && reader.good(); ++f) {
+            std::string fontName = reader.readString();
+            u32 dataSize = reader.read<u32>();
             std::vector<u8> fontData(dataSize);
-            file.read(reinterpret_cast<char*>(fontData.data()), dataSize);
-            doc->embeddedFonts[fontName] = std::move(fontData);
+            reader.readBytes(fontData.data(), dataSize);
+            if (reader.good()) {
+                doc->embeddedFonts[fontName] = std::move(fontData);
+            }
         }
     }
 
     // Read layers
-    for (u32 i = 0; i < layerCount; ++i) {
-        u8 layerType = readValue<u8>(file);
+    for (u32 i = 0; i < layerCount && reader.good(); ++i) {
+        u8 layerType = reader.read<u8>();
+
+        std::string name = reader.readString();
+        bool visible = reader.read<bool>();
+        bool locked = reader.read<bool>();
+        f32 opacity = reader.read<f32>();
+        BlendMode blend = static_cast<BlendMode>(reader.read<u8>());
+        f32 posX = reader.read<f32>();
+        f32 posY = reader.read<f32>();
+        f32 scaleX = reader.read<f32>();
+        f32 scaleY = reader.read<f32>();
+        f32 rotation = reader.read<f32>();
 
         std::unique_ptr<LayerBase> layer;
 
-        // Read common properties first
-        std::string name = readString(file);
-        bool visible = readValue<bool>(file);
-        bool locked = readValue<bool>(file);
-        f32 opacity = readValue<f32>(file);
-        BlendMode blend = static_cast<BlendMode>(readValue<u8>(file));
-        f32 posX = readValue<f32>(file);
-        f32 posY = readValue<f32>(file);
-        f32 scaleX = readValue<f32>(file);
-        f32 scaleY = readValue<f32>(file);
-        f32 rotation = readValue<f32>(file);
-
         if (layerType == 0) {
-            // Pixel layer
             auto pixel = std::make_unique<PixelLayer>(width, height);
-            u32 tileCount = readValue<u32>(file);
+            u32 tileCount = reader.read<u32>();
 
-            for (u32 t = 0; t < tileCount; ++t) {
-                i32 tileX = readValue<i32>(file);  // Signed coordinates
-                i32 tileY = readValue<i32>(file);  // Signed coordinates
+            for (u32 t = 0; t < tileCount && reader.good(); ++t) {
+                i32 tileX = reader.read<i32>();
+                i32 tileY = reader.read<i32>();
 
                 auto tile = std::make_unique<Tile>();
-                file.read(reinterpret_cast<char*>(tile->pixels), sizeof(tile->pixels));
+                reader.readBytes(tile->pixels, sizeof(tile->pixels));
 
                 u64 key = makeTileKey(tileX, tileY);
                 pixel->canvas.tiles[key] = std::move(tile);
             }
-
             layer = std::move(pixel);
         }
         else if (layerType == 1) {
-            // Text layer
             auto text = std::make_unique<TextLayer>();
-            text->text = readString(file);
-            text->fontFamily = readString(file);
-            text->fontSize = readValue<u32>(file);
-            text->textColor.r = readValue<u8>(file);
-            text->textColor.g = readValue<u8>(file);
-            text->textColor.b = readValue<u8>(file);
-            text->textColor.a = readValue<u8>(file);
-            text->bold = readValue<bool>(file);
-            text->italic = readValue<bool>(file);
+            text->text = reader.readString();
+            text->fontFamily = reader.readString();
+            text->fontSize = reader.read<u32>();
+            text->textColor.r = reader.read<u8>();
+            text->textColor.g = reader.read<u8>();
+            text->textColor.b = reader.read<u8>();
+            text->textColor.a = reader.read<u8>();
+            text->bold = reader.read<bool>();
+            text->italic = reader.read<bool>();
             layer = std::move(text);
         }
         else if (layerType == 2) {
-            // Adjustment layer
-            AdjustmentType adjType = static_cast<AdjustmentType>(readValue<u8>(file));
+            AdjustmentType adjType = static_cast<AdjustmentType>(reader.read<u8>());
             auto adj = std::make_unique<AdjustmentLayer>(adjType);
 
-            // Deserialize params based on type
             switch (adjType) {
                 case AdjustmentType::BrightnessContrast: {
                     BrightnessContrastParams p;
-                    p.brightness = readValue<f32>(file);
-                    p.contrast = readValue<f32>(file);
+                    p.brightness = reader.read<f32>();
+                    p.contrast = reader.read<f32>();
                     adj->params = p;
                     break;
                 }
                 case AdjustmentType::TemperatureTint: {
                     TemperatureTintParams p;
-                    p.temperature = readValue<f32>(file);
-                    p.tint = readValue<f32>(file);
+                    p.temperature = reader.read<f32>();
+                    p.tint = reader.read<f32>();
                     adj->params = p;
                     break;
                 }
                 case AdjustmentType::HueSaturation: {
                     HueSaturationParams p;
-                    p.hue = readValue<f32>(file);
-                    p.saturation = readValue<f32>(file);
-                    p.lightness = readValue<f32>(file);
+                    p.hue = reader.read<f32>();
+                    p.saturation = reader.read<f32>();
+                    p.lightness = reader.read<f32>();
                     adj->params = p;
                     break;
                 }
                 case AdjustmentType::Vibrance: {
                     VibranceParams p;
-                    p.vibrance = readValue<f32>(file);
+                    p.vibrance = reader.read<f32>();
                     adj->params = p;
                     break;
                 }
                 case AdjustmentType::ColorBalance: {
                     ColorBalanceParams p;
-                    p.shadowsCyanRed = readValue<f32>(file);
-                    p.shadowsMagentaGreen = readValue<f32>(file);
-                    p.shadowsYellowBlue = readValue<f32>(file);
-                    p.midtonesCyanRed = readValue<f32>(file);
-                    p.midtonesMagentaGreen = readValue<f32>(file);
-                    p.midtonesYellowBlue = readValue<f32>(file);
-                    p.highlightsCyanRed = readValue<f32>(file);
-                    p.highlightsMagentaGreen = readValue<f32>(file);
-                    p.highlightsYellowBlue = readValue<f32>(file);
+                    p.shadowsCyanRed = reader.read<f32>();
+                    p.shadowsMagentaGreen = reader.read<f32>();
+                    p.shadowsYellowBlue = reader.read<f32>();
+                    p.midtonesCyanRed = reader.read<f32>();
+                    p.midtonesMagentaGreen = reader.read<f32>();
+                    p.midtonesYellowBlue = reader.read<f32>();
+                    p.highlightsCyanRed = reader.read<f32>();
+                    p.highlightsMagentaGreen = reader.read<f32>();
+                    p.highlightsYellowBlue = reader.read<f32>();
                     adj->params = p;
                     break;
                 }
                 case AdjustmentType::HighlightsShadows: {
                     HighlightsShadowsParams p;
-                    p.highlights = readValue<f32>(file);
-                    p.shadows = readValue<f32>(file);
+                    p.highlights = reader.read<f32>();
+                    p.shadows = reader.read<f32>();
                     adj->params = p;
                     break;
                 }
                 case AdjustmentType::Exposure: {
                     ExposureParams p;
-                    p.exposure = readValue<f32>(file);
-                    p.offset = readValue<f32>(file);
-                    p.gamma = readValue<f32>(file);
+                    p.exposure = reader.read<f32>();
+                    p.offset = reader.read<f32>();
+                    p.gamma = reader.read<f32>();
                     adj->params = p;
                     break;
                 }
                 case AdjustmentType::Levels: {
                     LevelsParams p;
-                    p.inputBlack = readValue<f32>(file);
-                    p.inputGamma = readValue<f32>(file);
-                    p.inputWhite = readValue<f32>(file);
-                    p.outputBlack = readValue<f32>(file);
-                    p.outputWhite = readValue<f32>(file);
+                    p.inputBlack = reader.read<f32>();
+                    p.inputGamma = reader.read<f32>();
+                    p.inputWhite = reader.read<f32>();
+                    p.outputBlack = reader.read<f32>();
+                    p.outputWhite = reader.read<f32>();
                     adj->params = p;
                     break;
                 }
@@ -335,14 +375,14 @@ std::unique_ptr<Document> load(const std::string& path) {
                 }
                 case AdjustmentType::BlackAndWhite: {
                     BlackAndWhiteParams p;
-                    p.reds = readValue<f32>(file);
-                    p.yellows = readValue<f32>(file);
-                    p.greens = readValue<f32>(file);
-                    p.cyans = readValue<f32>(file);
-                    p.blues = readValue<f32>(file);
-                    p.magentas = readValue<f32>(file);
-                    p.tintHue = readValue<f32>(file);
-                    p.tintAmount = readValue<f32>(file);
+                    p.reds = reader.read<f32>();
+                    p.yellows = reader.read<f32>();
+                    p.greens = reader.read<f32>();
+                    p.cyans = reader.read<f32>();
+                    p.blues = reader.read<f32>();
+                    p.magentas = reader.read<f32>();
+                    p.tintHue = reader.read<f32>();
+                    p.tintAmount = reader.read<f32>();
                     adj->params = p;
                     break;
                 }
@@ -350,7 +390,7 @@ std::unique_ptr<Document> load(const std::string& path) {
             layer = std::move(adj);
         }
 
-        if (layer) {
+        if (layer && reader.good()) {
             layer->name = name;
             layer->visible = visible;
             layer->locked = locked;
@@ -363,6 +403,8 @@ std::unique_ptr<Document> load(const std::string& path) {
         }
     }
 
+    if (!reader.good()) return nullptr;
+
     if (!doc->layers.empty()) {
         doc->activeLayerIndex = 0;
     }
@@ -371,10 +413,11 @@ std::unique_ptr<Document> load(const std::string& path) {
 }
 
 bool isProjectFile(const std::string& path) {
-    std::ifstream file(path, std::ios::binary);
-    if (!file.is_open()) return false;
+    std::vector<u8> buffer = Platform::readFile(path);
+    if (buffer.size() < sizeof(u32)) return false;
 
-    u32 magic = readValue<u32>(file);
+    u32 magic;
+    std::memcpy(&magic, buffer.data(), sizeof(u32));
     return magic == MAGIC;
 }
 

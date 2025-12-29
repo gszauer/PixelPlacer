@@ -284,7 +284,7 @@ public:
         // Hex input row
         auto hexRow = layout->createChild<HBoxLayout>(4 * Config::uiScale);
         hexRow->preferredSize = Vec2(0, 26 * Config::uiScale);
-        hexRow->createChild<Label>("Hex:")->preferredSize = Vec2(32 * Config::uiScale, 24 * Config::uiScale);
+        hexRow->createChild<Label>("Hex:")->preferredSize = Vec2(40 * Config::uiScale, 24 * Config::uiScale);
         hexField = hexRow->createChild<TextField>();
         hexField->text = "#000000FF";
         hexField->horizontalPolicy = SizePolicy::Expanding;

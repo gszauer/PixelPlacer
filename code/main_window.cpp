@@ -1001,20 +1001,16 @@ StatusBar::StatusBar() {
     setPadding(4 * Config::uiScale);
 
     auto layout = createChild<HBoxLayout>(8 * Config::uiScale);
+    layout->stretch = true;
     constexpr f32 LABEL_PADDING = 4.0f;
     constexpr f32 BTN_PADDING = 8.0f;
     f32 itemHeight = 20 * Config::uiScale;
 
-    positionLabel = layout->createChild<Label>("X: 0, Y: 0");
-    {
-        Vec2 minTextSize = FontRenderer::instance().measureText("X: -999, Y: -999", Config::defaultFontSize());
-        positionLabel->minSize = Vec2(minTextSize.x + LABEL_PADDING * 2, itemHeight);
-        positionLabel->preferredSize = positionLabel->minSize;
-    }
+    // Left side container (zoom, size, position)
+    leftLayout = layout->createChild<HBoxLayout>(8 * Config::uiScale);
+    leftLayout->horizontalPolicy = SizePolicy::Fixed;
 
-    layout->createChild<Separator>(false);
-
-    zoomButton = layout->createChild<Button>("100%");
+    zoomButton = leftLayout->createChild<Button>("100%");
     {
         Vec2 textSize = FontRenderer::instance().measureText("6400%", Config::defaultFontSize());
         zoomButton->preferredSize = Vec2(textSize.x + BTN_PADDING * 2, itemHeight);
@@ -1026,37 +1022,45 @@ StatusBar::StatusBar() {
         if (onFitToScreen) onFitToScreen();
     };
 
-    sizeSeparator = layout->createChild<Separator>(false);
-    sizeLabel = layout->createChild<Label>("1920 x 1080");
+    zoomSeparator = leftLayout->createChild<Separator>(false);
+    sizeLabel = leftLayout->createChild<Label>("1920 x 1080");
     {
         Vec2 textSize = FontRenderer::instance().measureText("99999 x 99999", Config::defaultFontSize());
         sizeLabel->preferredSize = Vec2(textSize.x + LABEL_PADDING * 2, itemHeight);
+        sizeLabel->minSize = sizeLabel->preferredSize;
     }
 
-    memorySeparator = layout->createChild<Separator>(false);
-    memoryLabel = layout->createChild<Label>("0 MB");
+    sizeSeparator = leftLayout->createChild<Separator>(false);
+    positionLabel = leftLayout->createChild<Label>("X: 0, Y: 0");
     {
-        Vec2 textSize = FontRenderer::instance().measureText("9999 MB", Config::defaultFontSize());
-        memoryLabel->preferredSize = Vec2(textSize.x + LABEL_PADDING * 2, itemHeight);
+        Vec2 minTextSize = FontRenderer::instance().measureText("X: -9999, Y: -9999", Config::defaultFontSize());
+        positionLabel->minSize = Vec2(minTextSize.x + LABEL_PADDING * 2, itemHeight);
+        positionLabel->preferredSize = positionLabel->minSize;
     }
 
+    // Spacer pushes right side to edge
     layout->createChild<Spacer>();
 
-    layout->createChild<Separator>(false);
+    // Right side container (scale controls) - always aligned to right
+    rightLayout = layout->createChild<HBoxLayout>(8 * Config::uiScale);
+    rightLayout->horizontalPolicy = SizePolicy::Fixed;
 
-    scaleLabel = layout->createChild<Label>("UI Scale");
+    scaleSeparator = rightLayout->createChild<Separator>(false);
+
+    scaleLabel = rightLayout->createChild<Label>("UI Scale");
     {
         Vec2 textSize = FontRenderer::instance().measureText("UI Scale", Config::defaultFontSize());
-        scaleLabel->preferredSize = Vec2(textSize.x + LABEL_PADDING * 2, itemHeight);
+        scaleLabel->preferredSize = Vec2(textSize.x + LABEL_PADDING * 4, itemHeight);
+        scaleLabel->minSize = scaleLabel->preferredSize;
     }
 
-    scaleSlider = layout->createChild<Slider>(0.5f, 4.0f, Config::uiScale);
+    scaleSlider = rightLayout->createChild<Slider>(0.5f, 4.0f, Config::uiScale);
     scaleSlider->preferredSize = Vec2(80 * Config::uiScale, itemHeight);
     scaleSlider->onDragEnd = [this]() {
         if (onScaleChanged) onScaleChanged(scaleSlider->value);
     };
 
-    scale1xBtn = layout->createChild<Button>("1x");
+    scale1xBtn = rightLayout->createChild<Button>("1x");
     {
         Vec2 textSize = FontRenderer::instance().measureText("1x", Config::defaultFontSize());
         scale1xBtn->preferredSize = Vec2(textSize.x + BTN_PADDING * 2, itemHeight);
@@ -1068,7 +1072,7 @@ StatusBar::StatusBar() {
         if (onScaleChanged) onScaleChanged(1.0f);
     };
 
-    scale2xBtn = layout->createChild<Button>("2x");
+    scale2xBtn = rightLayout->createChild<Button>("2x");
     {
         Vec2 textSize = FontRenderer::instance().measureText("2x", Config::defaultFontSize());
         scale2xBtn->preferredSize = Vec2(textSize.x + BTN_PADDING * 2, itemHeight);
@@ -1080,7 +1084,7 @@ StatusBar::StatusBar() {
         if (onScaleChanged) onScaleChanged(2.0f);
     };
 
-    scale4xBtn = layout->createChild<Button>("4x");
+    scale4xBtn = rightLayout->createChild<Button>("4x");
     {
         Vec2 textSize = FontRenderer::instance().measureText("4x", Config::defaultFontSize());
         scale4xBtn->preferredSize = Vec2(textSize.x + BTN_PADDING * 2, itemHeight);
@@ -1097,33 +1101,66 @@ void StatusBar::layout() {
     f32 availableWidth = bounds.w;
     f32 padding = 4 * Config::uiScale;
     f32 spacing = 8 * Config::uiScale;
-    f32 separatorWidth = 1;
+    f32 sep = 1 + spacing;  // separator + one spacing
 
-    f32 essentialWidth = padding * 2 +
-        positionLabel->preferredSize.x + spacing + separatorWidth + spacing +
-        zoomButton->preferredSize.x + spacing +
-        separatorWidth + spacing +
-        scaleLabel->preferredSize.x + spacing +
-        scaleSlider->preferredSize.x + spacing +
-        scale1xBtn->preferredSize.x + spacing +
-        scale2xBtn->preferredSize.x + spacing +
-        scale4xBtn->preferredSize.x;
+    // Calculate widths of each element
+    f32 zoomW = zoomButton->preferredSize.x;
+    f32 sizeW = sizeLabel->preferredSize.x;
+    f32 posW = positionLabel->preferredSize.x;
+    f32 scaleLabelW = scaleLabel->preferredSize.x;
+    f32 sliderW = scaleSlider->preferredSize.x;
+    f32 btn1W = scale1xBtn->preferredSize.x;
+    f32 btn2W = scale2xBtn->preferredSize.x;
+    f32 btn4W = scale4xBtn->preferredSize.x;
 
-    f32 sizeWidth = separatorWidth + spacing + sizeLabel->preferredSize.x + spacing;
-    f32 memoryWidth = separatorWidth + spacing + memoryLabel->preferredSize.x + spacing;
+    // Right side always needs: buttons
+    f32 buttonsW = btn1W + spacing + btn2W + spacing + btn4W;
+    f32 minRightWidth = buttonsW;
 
-    bool showMemory = (availableWidth >= essentialWidth + sizeWidth + memoryWidth);
-    bool showSize = (availableWidth >= essentialWidth + sizeWidth);
+    // Determine what fits
+    f32 usedWidth = padding * 2 + minRightWidth;
 
-    if (memoryLabel) memoryLabel->visible = showMemory;
-    if (memorySeparator) memorySeparator->visible = showMemory;
+    bool showSlider = (availableWidth >= usedWidth + spacing + sliderW);
+    if (showSlider) usedWidth += spacing + sliderW;
+
+    bool showScaleLabel = showSlider && (availableWidth >= usedWidth + spacing + scaleLabelW);
+    if (showScaleLabel) usedWidth += spacing + scaleLabelW;
+
+    // Left side elements (need some minimum space for spacer too)
+    f32 minSpacerWidth = 20 * Config::uiScale;
+
+    bool showZoom = (availableWidth >= usedWidth + minSpacerWidth + sep + zoomW);
+    bool showSize = showZoom && (availableWidth >= usedWidth + minSpacerWidth + sep + zoomW + sep + sizeW);
+    bool showPos = showSize && (availableWidth >= usedWidth + minSpacerWidth + sep + zoomW + sep + sizeW + sep + posW);
+
+    // Apply visibility
+    if (scaleLabel) scaleLabel->visible = showScaleLabel;
+    if (scaleSeparator) scaleSeparator->visible = showSlider;
+    if (scaleSlider) scaleSlider->visible = showSlider;
+    if (zoomButton) zoomButton->visible = showZoom;
+    if (zoomSeparator) zoomSeparator->visible = showZoom && showSize;
     if (sizeLabel) sizeLabel->visible = showSize;
-    if (sizeSeparator) sizeSeparator->visible = showSize;
+    if (sizeSeparator) sizeSeparator->visible = showSize && showPos;
+    if (positionLabel) positionLabel->visible = showPos;
+
+    // Update left layout width based on visible elements
+    f32 leftWidth = 0;
+    if (showZoom) leftWidth += zoomW;
+    if (showSize) leftWidth += sep + sizeW;
+    if (showPos) leftWidth += sep + posW;
+    if (leftLayout) leftLayout->preferredSize.x = leftWidth;
+
+    // Update right layout width based on visible elements
+    f32 rightWidth = buttonsW;
+    if (showSlider) rightWidth += spacing + sliderW;
+    if (showScaleLabel) rightWidth += spacing + scaleLabelW;
+    if (showSlider) rightWidth += sep;  // separator before scale controls
+    if (rightLayout) rightLayout->preferredSize.x = rightWidth;
 
     Panel::layout();
 }
 
-void StatusBar::update(const Vec2& mousePos, f32 zoom, u32 width, u32 height, size_t memBytes) {
+void StatusBar::update(const Vec2& mousePos, f32 zoom, u32 width, u32 height) {
     if (positionLabel) {
         positionLabel->setText("X: " + std::to_string(static_cast<i32>(mousePos.x)) +
                               ", Y: " + std::to_string(static_cast<i32>(mousePos.y)));
@@ -1133,9 +1170,6 @@ void StatusBar::update(const Vec2& mousePos, f32 zoom, u32 width, u32 height, si
     }
     if (sizeLabel) {
         sizeLabel->setText(std::to_string(width) + " x " + std::to_string(height));
-    }
-    if (memoryLabel) {
-        memoryLabel->setText(std::to_string(memBytes / (1024 * 1024)) + " MB");
     }
 }
 
@@ -1174,7 +1208,8 @@ MenuBar::MenuBar() {
     addMenu(menuLayout, "View", createViewMenu());
     addMenu(menuLayout, "Help", createHelpMenu());
 
-    // Draggable title bar area in the middle
+#ifndef __EMSCRIPTEN__
+    // Draggable title bar area in the middle (not needed in browser)
     dragArea = layout->createChild<TitleBarDragArea>();
     dragArea->onStartDrag = [this](i32 x, i32 y) {
         if (onWindowDrag) onWindowDrag(x, y);
@@ -1183,7 +1218,7 @@ MenuBar::MenuBar() {
         if (onWindowMaximize) onWindowMaximize();
     };
 
-    // Window control buttons on the right
+    // Window control buttons on the right (browser provides these)
     controlLayout = layout->createChild<HBoxLayout>(0);
     controlLayout->horizontalPolicy = SizePolicy::Fixed;
 
@@ -1201,6 +1236,7 @@ MenuBar::MenuBar() {
     closeBtn->onClick = [this]() {
         if (onWindowClose) onWindowClose();
     };
+#endif
 }
 
 void MenuBar::updateMaximizeButton() {
@@ -1371,12 +1407,27 @@ PopupMenu* MenuBar::createFileMenu() {
 
     menu->addItem("Open...", "", [this]() {
         closeActiveMenu();
-        getAppState().requestOpenFileDialog("Open Image", "*.png *.jpg *.jpeg *.bmp *.gif",
+        getAppState().requestOpenFileDialog("Open File", "*.png *.jpg *.jpeg *.bmp *.gif *.pp",
             [](const std::string& path) {
                 if (path.empty()) return;
-                auto doc = ImageIO::loadAsDocument(path);
+
+                std::unique_ptr<Document> doc;
+                if (Platform::getFileExtension(path) == ".pp") {
+                    doc = ProjectFile::load(path);
+                } else {
+                    doc = ImageIO::loadAsDocument(path);
+                }
+
                 if (doc) {
                     AppState& state = getAppState();
+                    doc->filePath = path;
+                    doc->name = Platform::getFileName(path);
+
+                    // Register embedded fonts with FontRenderer
+                    for (const auto& [fontName, fontData] : doc->embeddedFonts) {
+                        FontRenderer::instance().loadCustomFont(fontName, fontData.data(), static_cast<i32>(fontData.size()));
+                    }
+
                     Document* docPtr = doc.get();
                     state.documents.push_back(std::move(doc));
                     state.setActiveDocument(docPtr);
@@ -1403,6 +1454,23 @@ PopupMenu* MenuBar::createFileMenu() {
     });
 
     menu->addSeparator();
+
+    menu->addItem("Save...", "", [this]() {
+        closeActiveMenu();
+        AppState& state = getAppState();
+        Document* doc = state.activeDocument;
+        if (!doc) return;
+
+        std::string defaultName = doc->name;
+        if (Platform::getFileExtension(defaultName) != ".pp") {
+            defaultName += ".pp";
+        }
+        state.requestSaveFileDialog("Save Project", defaultName, "*.pp",
+            [doc](const std::string& path) {
+                if (path.empty()) return;
+                ProjectFile::save(path, *doc);
+            });
+    });
 
     menu->addItem("Export...", "", [this]() {
         closeActiveMenu();
@@ -2603,15 +2671,9 @@ void MainWindow::buildUI() {
         getAppState().requestFileDialog("Load Font", "*.ttf *.otf", [callback](const std::string& path) {
             if (path.empty()) return;
 
-            // Read font file
-            std::ifstream file(path, std::ios::binary | std::ios::ate);
-            if (!file.is_open()) return;
-
-            std::streamsize size = file.tellg();
-            file.seekg(0, std::ios::beg);
-
-            std::vector<u8> fontData(size);
-            if (!file.read(reinterpret_cast<char*>(fontData.data()), size)) return;
+            // Read font file using platform abstraction
+            std::vector<u8> fontData = Platform::readFile(path);
+            if (fontData.empty()) return;
 
             // Extract filename from path
             std::string fontName = Platform::getFileName(path);
@@ -3175,8 +3237,7 @@ void MainWindow::render(Framebuffer& fb) {
             docView->lastMousePos,
             docView->view.zoom,
             doc->width,
-            doc->height,
-            doc->getMemoryUsage()
+            doc->height
         );
     }
 

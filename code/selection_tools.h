@@ -6,6 +6,8 @@
 #include "platform.h"
 #include "app_state.h"
 #include <vector>
+#include <unordered_set>
+#include <queue>
 
 // Rectangle selection tool
 class RectangleSelectTool : public Tool {
@@ -91,6 +93,15 @@ private:
                            f32 tolerance, bool add, bool subtract);
     static void globalSelect(Selection& sel, const TiledCanvas& canvas,
                             u32 targetColor, f32 tolerance, bool add, bool subtract);
+
+    // Transform-aware selection functions
+    static void floodSelectTransformed(Selection& sel, const TiledCanvas& canvas,
+                                       i32 startX, i32 startY, u32 targetColor,
+                                       f32 tolerance, bool add, bool subtract,
+                                       const Matrix3x2& layerToDoc);
+    static void globalSelectTransformed(Selection& sel, const TiledCanvas& canvas,
+                                        u32 targetColor, f32 tolerance, bool add, bool subtract,
+                                        const Matrix3x2& layerToDoc);
 };
 
 #endif

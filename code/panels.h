@@ -87,6 +87,7 @@ public:
     Document* document = nullptr;
 
     LayerPropsPanel();
+    ~LayerPropsPanel();
     void buildCommonControls(VBoxLayout* layout);
     void setDocument(Document* doc);
 
@@ -216,6 +217,7 @@ public:
     static constexpr f32 DRAG_THRESHOLD = 5.0f;
 
     LayerPanel();
+    ~LayerPanel();
     void setDocument(Document* doc);
     void showAdjustmentMenu();
     void closeAdjustmentMenu();

@@ -246,7 +246,7 @@ CanvasSizeDialog::CanvasSizeDialog() : Dialog("Canvas Size") {
     anchorRow->preferredSize = Vec2(0, 56 * Config::uiScale);
 
     auto anchorLabel = anchorRow->createChild<Label>("Anchor:");
-    anchorLabel->preferredSize = Vec2(55 * Config::uiScale, 22 * Config::uiScale);
+    anchorLabel->preferredSize = Vec2(65 * Config::uiScale, 22 * Config::uiScale);
 
     anchorGrid = anchorRow->createChild<AnchorGridWidget>();
     anchorGrid->preferredSize = Vec2(50 * Config::uiScale, 50 * Config::uiScale);

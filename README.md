@@ -1,10 +1,10 @@
 # PixelPlacer
 
-A raster graphics editor built in minimal C++ with automatic memory management. 
+A raster graphics editor built in minimal C++ with automatic memory management. Runs natively on Linux and in the browser via WebAssembly.
 
 ![Screenshot](screenshots/screenshot.png)
 
-Built with Claude Code Max 4.5. I never read or reviewed any of this code.
+Built with Claude Code Opus 4.5. I never read or reviewed any of this code.
 
 ## Key Features
 
@@ -50,6 +50,52 @@ Debug build (with symbols, no optimization):
 ./pixelplacer_debug
 ```
 
+## Web Version (WebAssembly)
+
+PixelPlacer runs in modern browsers via WebAssembly. The entire application compiles to WASM with no feature loss.
+
+### Building for Web
+
+Requires the [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html):
+
+```bash
+# Install and activate Emscripten (one-time setup)
+git clone https://github.com/emscripten-core/emsdk.git
+cd emsdk
+./emsdk install latest
+./emsdk activate latest
+source ./emsdk_env.sh
+
+# Build PixelPlacer for web
+./build_wasm.sh
+```
+
+This creates a `www/` folder with:
+- `index.html` - the web app
+- `pixelplacer.js` - JavaScript glue code (generated)
+- `pixelplacer.wasm` - compiled application
+
+### Testing Locally
+
+```bash
+cd www
+python3 -m http.server 8080
+# Open http://localhost:8080
+```
+
+### Browser Requirements
+
+- Chrome 57+, Firefox 52+, Safari 11+, Edge 16+ (any browser with WebAssembly support)
+- File open/save works via browser dialogs (File > Open, File > Save trigger downloads)
+- Drag and drop files onto the canvas to open them
+- Clipboard operations require HTTPS in production
+
+### Deploying
+
+Copy the contents of `www/` to any static web host. No server-side code required.
+
+---
+
 ### Unity Build
 
 This project uses a unity build pattern where all source files are compiled as a single translation unit. The `main.cpp` file includes all other `.cpp` files when `UNITY_BUILD` is defined. This means you only compile one file, the compiler sees all the code at once, and it can optimize across file boundaries. The downside is any change recompiles everything, but for a project this size that's fine.
@@ -67,21 +113,21 @@ This project uses a unity build pattern where all source files are compiled as a
          v                        v                        v
 +------------------+     +------------------+     +------------------+
 |  PlatformWindow  |     |    Tool Palette  |     |     Document     |
-|  (X11 backend)   |     |    Menu Bar      |     |     (layers)     |
+| (X11 or WASM)    |     |    Menu Bar      |     |     (layers)     |
 +------------------+     |    Panels        |     +------------------+
-                         +------------------+              |
-                                                           v
-                                                  +------------------+
-                                                  |   TiledCanvas    |
-                                                  |   (sparse tiles) |
-                                                  +------------------+
+         |               +------------------+              |
+         v                                                 v
++------------------+                              +------------------+
+| X11Window (Linux)|                              |   TiledCanvas    |
+| WasmWindow (Web) |                              |   (sparse tiles) |
++------------------+                              +------------------+
 ```
 
 ---
 
 ## How the Application Runs
 
-When you launch PixelPlacer, the `Application` class takes over. It creates a platform window (X11 on Linux), builds the entire UI as a tree of widgets, and enters the main event loop. The loop is simple: wait for an event from the OS, dispatch it to the widget tree, render the UI to a framebuffer, and blit that framebuffer to the screen. This repeats until you close the window.
+When you launch PixelPlacer, the `Application` class takes over. It creates a platform window (X11 on Linux, or a canvas element in the browser), builds the entire UI as a tree of widgets, and enters the main event loop. The loop is simple: wait for an event from the OS (or browser), dispatch it to the widget tree, render the UI to a framebuffer, and blit that framebuffer to the screen. This repeats until you close the window.
 
 The `Application` class owns everything. It holds the `PlatformWindow`, the `MainWindow` (which is the root widget), and manages the list of open documents. When you create a new document or open a file, Application creates a `Document` object and hands it to the UI. When you close the last document, the app keeps running with an empty canvas area.
 
@@ -290,7 +336,9 @@ Dialogs inherit from `Dialog` which provides the standard frame, title bar, and 
 
 ### File Dialogs
 
-File open/save dialogs use the system's native dialogs via zenity or kdialog. This is handled in `platform_linux.cpp`. The dialog call is blocking, but we have to be careful about when we invoke it - X11 has issues if you're holding a mouse grab when opening a native dialog. So file operations are "deferred" - we set a flag and the main loop opens the dialog after releasing the mouse.
+On Linux, file open/save dialogs use the system's native dialogs via zenity or kdialog. This is handled in `platform_linux.cpp`. The dialog call is blocking, but we have to be careful about when we invoke it - X11 has issues if you're holding a mouse grab when opening a native dialog. So file operations are "deferred" - we set a flag and the main loop opens the dialog after releasing the mouse.
+
+On the web, file dialogs work through the browser. Opening a file triggers a hidden `<input type="file">` click, and the selected file's data is passed to WASM memory. Saving triggers a download via a Blob URL. The `platform_wasm.cpp` handles all this with JavaScript interop.
 
 ---
 
@@ -340,7 +388,7 @@ The codebase uses modern C++ memory management:
 | Other tools | `tool.h/cpp`, `eraser_tool.h/cpp`, `fill_tool.h/cpp`, `selection_tools.h/cpp`, `transform_tools.h/cpp`, `retouch_tools.h/cpp` |
 | Widget system | `widget.h/cpp`, `basic_widgets.h/cpp`, `layouts.h/cpp` |
 | UI panels | `panels.h/cpp`, `dialogs.h/cpp`, `main_window.h/cpp`, `overlay_manager.h/cpp` |
-| Platform layer | `platform_window.h`, `platform_linux.cpp`, `x11_window.h/cpp` |
+| Platform layer | `platform_window.h`, `platform.h`, `platform_linux.cpp`, `x11_window.h/cpp`, `platform_wasm.cpp`, `wasm_window.h/cpp`, `shell.html` |
 | File I/O | `image_io.h/cpp`, `project_file.h/cpp` |
 | Fonts | `inter_font.cpp`, `material_font.cpp` |
 

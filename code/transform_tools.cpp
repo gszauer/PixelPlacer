@@ -16,26 +16,39 @@ void CropTool::reset(Document& doc) {
 void CropTool::apply(Document& doc) {
     if (cropRect.w <= 0 || cropRect.h <= 0) return;
 
+    // Clear any active selection before cropping to avoid issues
+    doc.selection.clear();
+
     u32 newWidth = static_cast<u32>(cropRect.w);
     u32 newHeight = static_cast<u32>(cropRect.h);
 
-    // For each layer, copy pixels with offset
-    // Old pixel at (px, py) goes to (px - cropRect.x, py - cropRect.y)
+    // For each layer, handle cropping appropriately based on transform
     for (auto& layer : doc.layers) {
         if (layer->isPixelLayer()) {
             PixelLayer* pixelLayer = static_cast<PixelLayer*>(layer.get());
-            TiledCanvas newCanvas(newWidth, newHeight);
 
-            pixelLayer->canvas.forEachPixel([&](u32 x, u32 y, u32 pixel) {
-                i32 newX = static_cast<i32>(x) - cropRect.x;
-                i32 newY = static_cast<i32>(y) - cropRect.y;
-                if (newX >= 0 && newX < static_cast<i32>(newWidth) &&
-                    newY >= 0 && newY < static_cast<i32>(newHeight)) {
-                    newCanvas.setPixel(newX, newY, pixel);
-                }
-            });
+            if (pixelLayer->transform.isIdentity()) {
+                // Identity transform: layer coords == document coords
+                // Recreate canvas with cropped region
+                TiledCanvas newCanvas(newWidth, newHeight);
 
-            pixelLayer->canvas = std::move(newCanvas);
+                pixelLayer->canvas.forEachPixel([&](u32 x, u32 y, u32 pixel) {
+                    i32 newX = static_cast<i32>(x) - cropRect.x;
+                    i32 newY = static_cast<i32>(y) - cropRect.y;
+                    if (newX >= 0 && newX < static_cast<i32>(newWidth) &&
+                        newY >= 0 && newY < static_cast<i32>(newHeight)) {
+                        newCanvas.setPixel(newX, newY, pixel);
+                    }
+                });
+
+                pixelLayer->canvas = std::move(newCanvas);
+            } else {
+                // Transformed layer: just adjust position in document space
+                // The canvas stays the same (it's in layer space)
+                // This preserves the layer content even if partially outside crop
+                pixelLayer->transform.position.x -= cropRect.x;
+                pixelLayer->transform.position.y -= cropRect.y;
+            }
         }
         else if (layer->isTextLayer()) {
             // Adjust text layer position

@@ -189,17 +189,12 @@ void Application::rebuildUIWithScale(f32 newScale) {
     // Update the global UI scale
     Config::uiScale = newScale;
 
-    // Store current document to reconnect after rebuild
-    Document* activeDoc = getAppState().activeDocument;
-
     // Rebuild the entire UI with the new scale
+    // Note: createMainWindow -> MainWindow constructor calls connectToDocument()
     createMainWindow();
 
-    // Reconnect to the active document
+    // Update the scale slider to reflect current scale (connectToDocument already called in constructor)
     if (auto* mainWindow = dynamic_cast<MainWindow*>(rootWidget.get())) {
-        mainWindow->connectToDocument();
-
-        // Update the scale slider to reflect current scale
         if (mainWindow->statusBar && mainWindow->statusBar->scaleSlider) {
             mainWindow->statusBar->scaleSlider->setValue(newScale);
         }
@@ -216,58 +211,78 @@ void Application::updateDPIScale() {
     }
 }
 
+void Application::frame() {
+    if (!initialized) return;
+
+    AppState& state = getAppState();
+
+    window->processEvents();
+
+    // Apply deferred UI changes (must be after events, before render)
+    if (auto* mainWindow = dynamic_cast<MainWindow*>(rootWidget.get())) {
+        mainWindow->applyDeferredChanges();
+    }
+
+    // Process deferred file dialog (must be outside event handling)
+    // Wait for mouse button release to ensure implicit grab is released
+    // Exception: In WASM, we must process immediately to maintain "user gesture" context
+    // for browser security (file input click requires user gesture)
+#ifdef __EMSCRIPTEN__
+    if (state.pendingFileDialog.active) {
+#else
+    if (state.pendingFileDialog.active && !state.mouseDown) {
+#endif
+        state.pendingFileDialog.active = false;
+        std::string path;
+        if (state.pendingFileDialog.isSaveDialog) {
+            path = Platform::saveFileDialog(
+                state.pendingFileDialog.title.c_str(),
+                state.pendingFileDialog.defaultName.c_str(),
+                state.pendingFileDialog.filters.c_str()
+            );
+        } else {
+            path = Platform::openFileDialog(
+                state.pendingFileDialog.title.c_str(),
+                state.pendingFileDialog.filters.c_str()
+            );
+        }
+        if (state.pendingFileDialog.callback) {
+            state.pendingFileDialog.callback(path);
+        }
+        state.needsRedraw = true;
+    }
+
+    // Process deferred UI scale change (must be outside event handling to avoid use-after-free)
+    if (state.pendingScaleChange) {
+        state.pendingScaleChange = false;
+        rebuildUIWithScale(state.pendingScaleValue);
+    }
+
+    // Force redraw if there's an active selection (for marching ants animation)
+    if (state.activeDocument && state.activeDocument->selection.hasSelection) {
+        state.needsRedraw = true;
+    }
+
+    if (state.needsRedraw) {
+        render();
+        present();
+        state.needsRedraw = false;
+    }
+}
+
 void Application::run() {
     if (!initialized) return;
 
     AppState& state = getAppState();
 
+#ifdef __EMSCRIPTEN__
+    // In Emscripten, the main loop is managed by emscripten_set_main_loop
+    // This function should not be called directly in WASM builds
+    // The frame() method is called instead by the main loop callback
+    (void)state;
+#else
     while (state.running) {
-        window->processEvents();
-
-        // Apply deferred UI changes (must be after events, before render)
-        if (auto* mainWindow = dynamic_cast<MainWindow*>(rootWidget.get())) {
-            mainWindow->applyDeferredChanges();
-        }
-
-        // Process deferred file dialog (must be outside event handling)
-        // Wait for mouse button release to ensure implicit grab is released
-        if (state.pendingFileDialog.active && !state.mouseDown) {
-            state.pendingFileDialog.active = false;
-            std::string path;
-            if (state.pendingFileDialog.isSaveDialog) {
-                path = Platform::saveFileDialog(
-                    state.pendingFileDialog.title.c_str(),
-                    state.pendingFileDialog.defaultName.c_str(),
-                    state.pendingFileDialog.filters.c_str()
-                );
-            } else {
-                path = Platform::openFileDialog(
-                    state.pendingFileDialog.title.c_str(),
-                    state.pendingFileDialog.filters.c_str()
-                );
-            }
-            if (state.pendingFileDialog.callback) {
-                state.pendingFileDialog.callback(path);
-            }
-            state.needsRedraw = true;
-        }
-
-        // Process deferred UI scale change (must be outside event handling to avoid use-after-free)
-        if (state.pendingScaleChange) {
-            state.pendingScaleChange = false;
-            rebuildUIWithScale(state.pendingScaleValue);
-        }
-
-        // Force redraw if there's an active selection (for marching ants animation)
-        if (state.activeDocument && state.activeDocument->selection.hasSelection) {
-            state.needsRedraw = true;
-        }
-
-        if (state.needsRedraw) {
-            render();
-            present();
-            state.needsRedraw = false;
-        }
+        frame();
 
         // Small delay to prevent 100% CPU usage
         // Use longer delay when not animating to save power
@@ -277,6 +292,7 @@ void Application::run() {
             Platform::sleepMs(1);
         }
     }
+#endif
 }
 
 void Application::shutdown() {

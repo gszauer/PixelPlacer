@@ -61,13 +61,38 @@ bool saveImagePNG(const std::string& path, const TiledCanvas& canvas) {
         }
     }
 
+#ifdef __EMSCRIPTEN__
+    // In WASM, write PNG to memory and use Platform::writeFile for download
+    int pngLen = 0;
+    unsigned char* pngData = stbi_write_png_to_mem(pixels.data(), canvas.width * 4,
+                                                    canvas.width, canvas.height, 4, &pngLen);
+    if (!pngData) {
+        return false;
+    }
+    bool result = Platform::writeFile(path, pngData, pngLen);
+    STBIW_FREE(pngData);
+    return result;
+#else
     return stbi_write_png(path.c_str(), canvas.width, canvas.height, 4, pixels.data(),
                           canvas.width * 4) != 0;
+#endif
 }
 
 std::unique_ptr<Document> loadAsDocument(const std::string& path) {
     i32 w, h, channels;
-    u8* data = stbi_load(path.c_str(), &w, &h, &channels, 4);
+    u8* data = nullptr;
+
+#ifdef __EMSCRIPTEN__
+    // In WASM, read file data from memory (received via JavaScript)
+    std::vector<u8> fileData = Platform::readFile(path);
+    if (fileData.empty()) {
+        return nullptr;
+    }
+    data = stbi_load_from_memory(fileData.data(), static_cast<int>(fileData.size()),
+                                  &w, &h, &channels, 4);
+#else
+    data = stbi_load(path.c_str(), &w, &h, &channels, 4);
+#endif
 
     if (!data) {
         return nullptr;
@@ -206,8 +231,21 @@ bool exportPNG(const std::string& path, const Document& doc) {
         }
     }
 
+#ifdef __EMSCRIPTEN__
+    // In WASM, write PNG to memory and use Platform::writeFile for download
+    int pngLen = 0;
+    unsigned char* pngData = stbi_write_png_to_mem(pixels.data(), doc.width * 4,
+                                                    doc.width, doc.height, 4, &pngLen);
+    if (!pngData) {
+        return false;
+    }
+    bool result = Platform::writeFile(path, pngData, pngLen);
+    STBIW_FREE(pngData);
+    return result;
+#else
     return stbi_write_png(path.c_str(), doc.width, doc.height, 4, pixels.data(),
                           doc.width * 4) != 0;
+#endif
 }
 
 bool getImageSize(const std::string& path, u32& width, u32& height) {

@@ -516,19 +516,26 @@ void Document::setTool(std::unique_ptr<Tool> tool) {
             i32 offsetX = static_cast<i32>(std::round(floatingContent.currentOffset.x));
             i32 offsetY = static_cast<i32>(std::round(floatingContent.currentOffset.y));
 
+            // Compute document-to-layer transform
+            Matrix3x2 layerToDoc = layer->transform.toMatrix(layer->canvas.width, layer->canvas.height);
+            Matrix3x2 docToLayer = layerToDoc.inverted();
+
             // Paste floating pixels back to layer at new position
             Recti origBounds = floatingContent.originalBounds;
             for (i32 y = 0; y < static_cast<i32>(floatingContent.pixels->height); ++y) {
                 for (i32 x = 0; x < static_cast<i32>(floatingContent.pixels->width); ++x) {
                     u32 pixel = floatingContent.pixels->getPixel(x, y);
                     if ((pixel & 0xFF) > 0) {
-                        i32 destX = origBounds.x + x + offsetX;
-                        i32 destY = origBounds.y + y + offsetY;
-                        if (destX >= 0 && destY >= 0 &&
-                            destX < static_cast<i32>(layer->canvas.width) &&
-                            destY < static_cast<i32>(layer->canvas.height)) {
-                            layer->canvas.setPixel(destX, destY, pixel);
-                        }
+                        // Document coordinates
+                        i32 docX = origBounds.x + x + offsetX;
+                        i32 docY = origBounds.y + y + offsetY;
+
+                        // Transform to layer coordinates
+                        Vec2 layerCoord = docToLayer.transform(Vec2(static_cast<f32>(docX), static_cast<f32>(docY)));
+                        i32 layerX = static_cast<i32>(std::floor(layerCoord.x));
+                        i32 layerY = static_cast<i32>(std::floor(layerCoord.y));
+
+                        layer->canvas.setPixel(layerX, layerY, pixel);
                     }
                 }
             }
@@ -670,13 +677,22 @@ void Document::copy() {
         clipboard.originY = selection.bounds.y;
         clipboard.pixels = std::make_unique<TiledCanvas>(clipboard.width, clipboard.height);
 
+        // Compute document-to-layer transform for transformed layers
+        Matrix3x2 layerToDoc = layer->transform.toMatrix(layer->canvas.width, layer->canvas.height);
+        Matrix3x2 docToLayer = layerToDoc.inverted();
+
         for (i32 y = 0; y < selection.bounds.h; ++y) {
             for (i32 x = 0; x < selection.bounds.w; ++x) {
-                i32 srcX = selection.bounds.x + x;
-                i32 srcY = selection.bounds.y + y;
+                i32 docX = selection.bounds.x + x;
+                i32 docY = selection.bounds.y + y;
 
-                if (selection.isSelected(srcX, srcY)) {
-                    u32 pixel = layer->canvas.getPixel(srcX, srcY);
+                if (selection.isSelected(docX, docY)) {
+                    // Transform document coords to layer coords
+                    Vec2 layerCoord = docToLayer.transform(Vec2(static_cast<f32>(docX), static_cast<f32>(docY)));
+                    i32 layerX = static_cast<i32>(std::floor(layerCoord.x));
+                    i32 layerY = static_cast<i32>(std::floor(layerCoord.y));
+
+                    u32 pixel = layer->canvas.getPixel(layerX, layerY);
                     clipboard.pixels->setPixel(x, y, pixel);
                 }
             }
@@ -779,11 +795,20 @@ void Document::deleteSelection() {
     PixelLayer* layer = getActivePixelLayer();
     if (!layer || !selection.hasSelection) return;
 
+    // Compute document-to-layer transform for transformed layers
+    Matrix3x2 layerToDoc = layer->transform.toMatrix(layer->canvas.width, layer->canvas.height);
+    Matrix3x2 docToLayer = layerToDoc.inverted();
+
     // Clear pixels in selection
     for (i32 y = selection.bounds.y; y < selection.bounds.y + selection.bounds.h; ++y) {
         for (i32 x = selection.bounds.x; x < selection.bounds.x + selection.bounds.w; ++x) {
             if (selection.isSelected(x, y)) {
-                layer->canvas.setPixel(x, y, 0);
+                // Transform document coords to layer coords
+                Vec2 layerCoord = docToLayer.transform(Vec2(static_cast<f32>(x), static_cast<f32>(y)));
+                i32 layerX = static_cast<i32>(std::floor(layerCoord.x));
+                i32 layerY = static_cast<i32>(std::floor(layerCoord.y));
+
+                layer->canvas.setPixel(layerX, layerY, 0);
             }
         }
     }
@@ -797,6 +822,10 @@ void Document::fill(u32 color) {
     if (!layer) return;
 
     if (selection.hasSelection) {
+        // Compute document-to-layer transform for transformed layers
+        Matrix3x2 layerToDoc = layer->transform.toMatrix(layer->canvas.width, layer->canvas.height);
+        Matrix3x2 docToLayer = layerToDoc.inverted();
+
         // Fill only selection
         for (i32 y = selection.bounds.y; y < selection.bounds.y + selection.bounds.h; ++y) {
             for (i32 x = selection.bounds.x; x < selection.bounds.x + selection.bounds.w; ++x) {
@@ -808,7 +837,13 @@ void Document::fill(u32 color) {
                         u8 alpha = (color & 0xFF) * selValue / 255;
                         adjustedColor = (color & 0xFFFFFF00) | alpha;
                     }
-                    layer->canvas.blendPixel(x, y, adjustedColor);
+
+                    // Transform document coords to layer coords
+                    Vec2 layerCoord = docToLayer.transform(Vec2(static_cast<f32>(x), static_cast<f32>(y)));
+                    i32 layerX = static_cast<i32>(std::floor(layerCoord.x));
+                    i32 layerY = static_cast<i32>(std::floor(layerCoord.y));
+
+                    layer->canvas.blendPixel(layerX, layerY, adjustedColor);
                 }
             }
         }

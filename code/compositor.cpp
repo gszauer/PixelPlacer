@@ -121,12 +121,8 @@ void compositeDocument(Framebuffer& fb, const Document& doc,
                     if (actualMode == SampleMode::Nearest) {
                         i32 ix = static_cast<i32>(std::floor(layerX));
                         i32 iy = static_cast<i32>(std::floor(layerY));
-                        // Return transparent for out-of-bounds pixels (no edge extension)
-                        if (ix >= 0 && iy >= 0 &&
-                            ix < static_cast<i32>(pixelLayer->canvas.width) &&
-                            iy < static_cast<i32>(pixelLayer->canvas.height)) {
-                            layerPixel = pixelLayer->canvas.getPixel(ix, iy);
-                        }
+                        // TiledCanvas handles any coordinates - returns 0 for non-existent tiles
+                        layerPixel = pixelLayer->canvas.getPixel(ix, iy);
                     } else {
                         layerPixel = Sampler::sample(pixelLayer->canvas, layerX, layerY, actualMode);
                     }

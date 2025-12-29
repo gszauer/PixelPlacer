@@ -23,24 +23,26 @@ void FillTool::onMouseDown(Document& doc, const ToolEvent& e) {
         return;
     }
 
-    // Expand layer canvas to cover document bounds if needed
-    expandLayerToDocument(layer, doc.width, doc.height);
+    // Compute layer transforms
+    Matrix3x2 layerToDoc = layer->transform.toMatrix(layer->canvas.width, layer->canvas.height);
+    Matrix3x2 docToLayer = layerToDoc.inverted();
 
-    // Now layer covers full document, so layer coords = document coords
-    i32 x = docX;
-    i32 y = docY;
+    // Transform click position to layer space
+    Vec2 layerPos = docToLayer.transform(Vec2(static_cast<f32>(docX), static_cast<f32>(docY)));
+    i32 layerX = static_cast<i32>(std::floor(layerPos.x));
+    i32 layerY = static_cast<i32>(std::floor(layerPos.y));
 
-    u32 targetColor = layer->canvas.getPixel(x, y);
+    u32 targetColor = layer->canvas.getPixel(layerX, layerY);
     u32 fillColor = state.foregroundColor.toRGBA();
 
     if (targetColor == fillColor) return;
 
     if (contiguous) {
-        floodFill(layer->canvas, x, y, targetColor, fillColor, tolerance, sel,
-                  0, 0, doc.width, doc.height);
+        floodFillTransformed(layer->canvas, layerX, layerY, targetColor, fillColor,
+                             tolerance, sel, layerToDoc);
     } else {
-        globalFill(layer->canvas, targetColor, fillColor, tolerance, sel,
-                   0, 0, doc.width, doc.height);
+        globalFillTransformed(layer->canvas, targetColor, fillColor, tolerance,
+                              sel, layerToDoc);
     }
 
     doc.notifyChanged(Rect(0, 0, doc.width, doc.height));
@@ -203,4 +205,83 @@ void FillTool::globalFill(TiledCanvas& canvas, u32 targetColor, u32 fillColor, f
             }
         }
     }
+}
+
+void FillTool::floodFillTransformed(TiledCanvas& canvas, i32 startX, i32 startY,
+                                     u32 targetColor, u32 fillColor, f32 tolerance,
+                                     const Selection* sel, const Matrix3x2& layerToDoc) {
+    // Use a set to track visited pixels (supports negative coordinates)
+    std::unordered_set<u64> visited;
+
+    auto packCoord = [](i32 x, i32 y) -> u64 {
+        return (static_cast<u64>(static_cast<u32>(y)) << 32) |
+               static_cast<u64>(static_cast<u32>(x));
+    };
+
+    std::queue<std::pair<i32, i32>> queue;
+    queue.push({startX, startY});
+    visited.insert(packCoord(startX, startY));
+
+    while (!queue.empty()) {
+        auto [x, y] = queue.front();
+        queue.pop();
+
+        // Transform layer coords to document coords for selection check
+        if (sel) {
+            Vec2 docPos = layerToDoc.transform(Vec2(static_cast<f32>(x), static_cast<f32>(y)));
+            i32 docX = static_cast<i32>(std::floor(docPos.x));
+            i32 docY = static_cast<i32>(std::floor(docPos.y));
+            if (!sel->isSelected(docX, docY)) continue;
+        }
+
+        u32 currentColor = canvas.getPixel(x, y);
+        if (colorDifference(currentColor, targetColor) > tolerance) continue;
+
+        canvas.setPixel(x, y, fillColor);
+
+        // Check 4-connected neighbors
+        const i32 dx[] = {-1, 1, 0, 0};
+        const i32 dy[] = {0, 0, -1, 1};
+
+        for (i32 i = 0; i < 4; ++i) {
+            i32 nx = x + dx[i];
+            i32 ny = y + dy[i];
+
+            u64 key = packCoord(nx, ny);
+            if (visited.find(key) != visited.end()) continue;
+
+            // Check selection for neighbor
+            if (sel) {
+                Vec2 docPos = layerToDoc.transform(Vec2(static_cast<f32>(nx), static_cast<f32>(ny)));
+                i32 docX = static_cast<i32>(std::floor(docPos.x));
+                i32 docY = static_cast<i32>(std::floor(docPos.y));
+                if (!sel->isSelected(docX, docY)) continue;
+            }
+
+            u32 neighborColor = canvas.getPixel(nx, ny);
+            if (colorDifference(neighborColor, targetColor) <= tolerance) {
+                visited.insert(key);
+                queue.push({nx, ny});
+            }
+        }
+    }
+}
+
+void FillTool::globalFillTransformed(TiledCanvas& canvas, u32 targetColor, u32 fillColor,
+                                      f32 tolerance, const Selection* sel,
+                                      const Matrix3x2& layerToDoc) {
+    // Iterate over existing tiles and fill matching pixels
+    canvas.forEachPixel([&](u32 x, u32 y, u32 pixel) {
+        // Check selection in document space
+        if (sel) {
+            Vec2 docPos = layerToDoc.transform(Vec2(static_cast<f32>(x), static_cast<f32>(y)));
+            i32 docX = static_cast<i32>(std::floor(docPos.x));
+            i32 docY = static_cast<i32>(std::floor(docPos.y));
+            if (!sel->isSelected(docX, docY)) return;
+        }
+
+        if (colorDifference(pixel, targetColor) <= tolerance) {
+            canvas.setPixel(x, y, fillColor);
+        }
+    });
 }

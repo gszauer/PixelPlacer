@@ -379,7 +379,7 @@ NewBrushDialog::NewBrushDialog() : Dialog("New Brush") {
 
     fileRow = layout->createChild<HBoxLayout>(8 * Config::uiScale);
     fileRow->preferredSize = Vec2(0, 28 * Config::uiScale);
-    static_cast<HBoxLayout*>(fileRow)->createChild<Label>("File:")->preferredSize = Vec2(50 * Config::uiScale, 24 * Config::uiScale);
+    static_cast<HBoxLayout*>(fileRow)->createChild<Label>("File:")->preferredSize = Vec2(65 * Config::uiScale, 24 * Config::uiScale);
     pathField = static_cast<HBoxLayout*>(fileRow)->createChild<TextField>();
     pathField->horizontalPolicy = SizePolicy::Expanding;
     pathField->readOnly = true;
@@ -390,14 +390,14 @@ NewBrushDialog::NewBrushDialog() : Dialog("New Brush") {
 
     auto nameRow = layout->createChild<HBoxLayout>(8 * Config::uiScale);
     nameRow->preferredSize = Vec2(0, 28 * Config::uiScale);
-    nameRow->createChild<Label>("Name:")->preferredSize = Vec2(50 * Config::uiScale, 24 * Config::uiScale);
+    nameRow->createChild<Label>("Name:")->preferredSize = Vec2(65 * Config::uiScale, 24 * Config::uiScale);
     nameField = nameRow->createChild<TextField>();
     nameField->text = "Custom Brush";
     nameField->horizontalPolicy = SizePolicy::Expanding;
 
     auto channelRow = layout->createChild<HBoxLayout>(4 * Config::uiScale);
     channelRow->preferredSize = Vec2(0, 24 * Config::uiScale);
-    channelRow->createChild<Label>("Channel:")->preferredSize = Vec2(55 * Config::uiScale, 20 * Config::uiScale);
+    channelRow->createChild<Label>("Channel:")->preferredSize = Vec2(65 * Config::uiScale, 20 * Config::uiScale);
 
     const char* channelNames[4] = {"R", "G", "B", "A"};
     for (i32 i = 0; i < 4; ++i) {
@@ -415,7 +415,7 @@ NewBrushDialog::NewBrushDialog() : Dialog("New Brush") {
 
     auto previewRow = layout->createChild<HBoxLayout>(8 * Config::uiScale);
     previewRow->preferredSize = Vec2(0, 80 * Config::uiScale);
-    previewRow->createChild<Label>("Preview:")->preferredSize = Vec2(50 * Config::uiScale, 24 * Config::uiScale);
+    previewRow->createChild<Label>("Preview:")->preferredSize = Vec2(65 * Config::uiScale, 24 * Config::uiScale);
     previewWidget = previewRow->createChild<BrushTipPreviewWidget>();
     previewWidget->preferredSize = Vec2(80 * Config::uiScale, 80 * Config::uiScale);
 

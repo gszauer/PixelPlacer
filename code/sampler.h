@@ -34,20 +34,11 @@ namespace Sampler {
         i32 x1 = x0 + 1;
         i32 y1 = y0 + 1;
 
-        i32 w = static_cast<i32>(canvas.width);
-        i32 h = static_cast<i32>(canvas.height);
-
-        // Helper to get pixel or transparent if out of bounds
-        auto getPixelSafe = [&](i32 px, i32 py) -> u32 {
-            if (px < 0 || py < 0 || px >= w || py >= h) return 0;
-            return canvas.getPixel(px, py);
-        };
-
-        // Get four corner pixels (transparent if out of bounds)
-        u32 c00 = getPixelSafe(x0, y0);
-        u32 c10 = getPixelSafe(x1, y0);
-        u32 c01 = getPixelSafe(x0, y1);
-        u32 c11 = getPixelSafe(x1, y1);
+        // TiledCanvas handles any coordinates - returns 0 for non-existent tiles
+        u32 c00 = canvas.getPixel(x0, y0);
+        u32 c10 = canvas.getPixel(x1, y0);
+        u32 c01 = canvas.getPixel(x0, y1);
+        u32 c11 = canvas.getPixel(x1, y1);
 
         // Interpolate each channel
         u8 r00, g00, b00, a00;
@@ -93,9 +84,6 @@ namespace Sampler {
         f32 fx = x - ix;
         f32 fy = y - iy;
 
-        i32 w = static_cast<i32>(canvas.width);
-        i32 h = static_cast<i32>(canvas.height);
-
         f32 r = 0, g = 0, b = 0, a = 0;
 
         for (i32 dy = -1; dy <= 2; ++dy) {
@@ -107,11 +95,8 @@ namespace Sampler {
                 i32 sx = ix + dx;
                 i32 sy = iy + dy;
 
-                // Return transparent for out-of-bounds pixels
-                u32 pixel = 0;
-                if (sx >= 0 && sy >= 0 && sx < w && sy < h) {
-                    pixel = canvas.getPixel(sx, sy);
-                }
+                // TiledCanvas handles any coordinates - returns 0 for non-existent tiles
+                u32 pixel = canvas.getPixel(sx, sy);
 
                 u8 pr, pg, pb, pa;
                 Blend::unpack(pixel, pr, pg, pb, pa);

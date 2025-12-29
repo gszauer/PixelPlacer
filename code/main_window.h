@@ -326,23 +326,31 @@ private:
 // Status bar
 class StatusBar : public Panel {
 public:
-    Label* positionLabel = nullptr;
+    // Container layouts
+    HBoxLayout* leftLayout = nullptr;
+    HBoxLayout* rightLayout = nullptr;
+
+    // Left side: zoom, size, position
     Button* zoomButton = nullptr;
+    Widget* zoomSeparator = nullptr;
     Label* sizeLabel = nullptr;
-    Label* memoryLabel = nullptr;
     Widget* sizeSeparator = nullptr;
-    Widget* memorySeparator = nullptr;
+    Label* positionLabel = nullptr;
+
+    // Right side: UI scale controls
+    Widget* scaleSeparator = nullptr;
     Label* scaleLabel = nullptr;
     Slider* scaleSlider = nullptr;
     Button* scale1xBtn = nullptr;
     Button* scale2xBtn = nullptr;
     Button* scale4xBtn = nullptr;
+
     std::function<void()> onFitToScreen;
     std::function<void(f32)> onScaleChanged;
 
     StatusBar();
     void layout() override;
-    void update(const Vec2& mousePos, f32 zoom, u32 width, u32 height, size_t memBytes);
+    void update(const Vec2& mousePos, f32 zoom, u32 width, u32 height);
     void setEnabled(bool isEnabled);
 };
 

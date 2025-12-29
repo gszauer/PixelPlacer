@@ -21,6 +21,7 @@ public:
 
     bool initialize(u32 width, u32 height, const char* title);
     void run();
+    void frame();  // Single frame tick - used by Emscripten main loop
     void shutdown();
 
     // Window management

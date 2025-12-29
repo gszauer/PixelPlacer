@@ -5,6 +5,30 @@
 
 namespace BrushRenderer {
 
+// Helper to check selection mask, optionally transforming layer coords to document coords
+inline f32 getSelectionAlpha(const Selection* selection, i32 layerX, i32 layerY,
+                             const Matrix3x2* layerToDoc = nullptr) {
+    if (!selection || !selection->hasSelection) return 1.0f;
+
+    i32 docX = layerX;
+    i32 docY = layerY;
+
+    // Transform from layer space to document space if transform provided
+    if (layerToDoc) {
+        Vec2 docPos = layerToDoc->transform(Vec2(static_cast<f32>(layerX), static_cast<f32>(layerY)));
+        docX = static_cast<i32>(std::floor(docPos.x + 0.5f));
+        docY = static_cast<i32>(std::floor(docPos.y + 0.5f));
+    }
+
+    if (docX < 0 || docY < 0 ||
+        docX >= static_cast<i32>(selection->width) ||
+        docY >= static_cast<i32>(selection->height)) {
+        return 0.0f;
+    }
+
+    return selection->getValue(docX, docY) / 255.0f;
+}
+
 // Generate a circular brush stamp with given diameter and hardness
 BrushStamp generateStamp(f32 diameter, f32 hardness) {
     u32 size = static_cast<u32>(std::ceil(diameter));
@@ -84,7 +108,8 @@ void stamp(TiledCanvas& canvas, const BrushStamp& brush,
 // Uses MAX blending to prevent overlapping dabs from accumulating opacity
 void stampToBuffer(TiledCanvas& buffer, const BrushStamp& brush,
                    const Vec2& pos, u32 color, f32 flow,
-                   BlendMode mode, const Selection* selection) {
+                   BlendMode mode, const Selection* selection,
+                   const Matrix3x2* layerToDoc) {
     i32 startX = static_cast<i32>(pos.x - brush.size / 2.0f);
     i32 startY = static_cast<i32>(pos.y - brush.size / 2.0f);
 
@@ -99,15 +124,10 @@ void stampToBuffer(TiledCanvas& buffer, const BrushStamp& brush,
             f32 brushAlpha = brush.getAlpha(bx, by);
             if (brushAlpha <= 0.0f) continue;
 
-            // Check selection mask
-            if (selection && selection->hasSelection) {
-                if (canvasX < 0 || canvasY < 0 ||
-                    canvasX >= static_cast<i32>(selection->width) ||
-                    canvasY >= static_cast<i32>(selection->height)) continue;
-                f32 selAlpha = selection->getValue(canvasX, canvasY) / 255.0f;
-                if (selAlpha <= 0.0f) continue;
-                brushAlpha *= selAlpha;
-            }
+            // Check selection mask (transform to document space if needed)
+            f32 selAlpha = getSelectionAlpha(selection, canvasX, canvasY, layerToDoc);
+            if (selAlpha <= 0.0f) continue;
+            brushAlpha *= selAlpha;
 
             // Apply flow to brush alpha
             f32 finalAlpha = brushAlpha * flow * (ca / 255.0f);
@@ -129,12 +149,12 @@ void stampToBuffer(TiledCanvas& buffer, const BrushStamp& brush,
 void strokeLineToBuffer(TiledCanvas& buffer, const BrushStamp& brush,
                         const Vec2& from, const Vec2& to, u32 color,
                         f32 flow, f32 spacing, BlendMode mode,
-                        const Selection* selection) {
+                        const Selection* selection, const Matrix3x2* layerToDoc) {
     Vec2 delta = to - from;
     f32 distance = delta.length();
 
     if (distance < 0.001f) {
-        stampToBuffer(buffer, brush, to, color, flow, mode, selection);
+        stampToBuffer(buffer, brush, to, color, flow, mode, selection, layerToDoc);
         return;
     }
 
@@ -144,7 +164,7 @@ void strokeLineToBuffer(TiledCanvas& buffer, const BrushStamp& brush,
     for (i32 i = 0; i <= steps; ++i) {
         f32 t = (steps > 0) ? static_cast<f32>(i) / steps : 1.0f;
         Vec2 pos = from + delta * t;
-        stampToBuffer(buffer, brush, pos, color, flow, mode, selection);
+        stampToBuffer(buffer, brush, pos, color, flow, mode, selection, layerToDoc);
     }
 }
 
@@ -172,7 +192,8 @@ void compositeStrokeToLayer(TiledCanvas& layer, const TiledCanvas& stroke,
 
 // Erase stamp to buffer
 void eraseStampToBuffer(TiledCanvas& buffer, const BrushStamp& brush,
-                        const Vec2& pos, f32 flow, const Selection* selection) {
+                        const Vec2& pos, f32 flow, const Selection* selection,
+                        const Matrix3x2* layerToDoc) {
     i32 startX = static_cast<i32>(pos.x - brush.size / 2.0f);
     i32 startY = static_cast<i32>(pos.y - brush.size / 2.0f);
 
@@ -184,15 +205,10 @@ void eraseStampToBuffer(TiledCanvas& buffer, const BrushStamp& brush,
             f32 brushAlpha = brush.getAlpha(bx, by);
             if (brushAlpha <= 0.0f) continue;
 
-            // Check selection mask
-            if (selection && selection->hasSelection) {
-                if (canvasX < 0 || canvasY < 0 ||
-                    canvasX >= static_cast<i32>(selection->width) ||
-                    canvasY >= static_cast<i32>(selection->height)) continue;
-                f32 selAlpha = selection->getValue(canvasX, canvasY) / 255.0f;
-                if (selAlpha <= 0.0f) continue;
-                brushAlpha *= selAlpha;
-            }
+            // Check selection mask (transform to document space if needed)
+            f32 selAlpha = getSelectionAlpha(selection, canvasX, canvasY, layerToDoc);
+            if (selAlpha <= 0.0f) continue;
+            brushAlpha *= selAlpha;
 
             // Store erase intensity as white with alpha
             f32 eraseAlpha = brushAlpha * flow;
@@ -212,12 +228,12 @@ void eraseStampToBuffer(TiledCanvas& buffer, const BrushStamp& brush,
 // Erase line to buffer
 void eraseLineToBuffer(TiledCanvas& buffer, const BrushStamp& brush,
                        const Vec2& from, const Vec2& to, f32 flow, f32 spacing,
-                       const Selection* selection) {
+                       const Selection* selection, const Matrix3x2* layerToDoc) {
     Vec2 delta = to - from;
     f32 distance = delta.length();
 
     if (distance < 0.001f) {
-        eraseStampToBuffer(buffer, brush, to, flow, selection);
+        eraseStampToBuffer(buffer, brush, to, flow, selection, layerToDoc);
         return;
     }
 
@@ -227,7 +243,7 @@ void eraseLineToBuffer(TiledCanvas& buffer, const BrushStamp& brush,
     for (i32 i = 0; i <= steps; ++i) {
         f32 t = (steps > 0) ? static_cast<f32>(i) / steps : 1.0f;
         Vec2 pos = from + delta * t;
-        eraseStampToBuffer(buffer, brush, pos, flow, selection);
+        eraseStampToBuffer(buffer, brush, pos, flow, selection, layerToDoc);
     }
 }
 
@@ -345,45 +361,38 @@ void eraseLineTool(TiledCanvas& canvas, const BrushStamp& brush,
 
 // Pencil mode functions
 void pencilPixel(TiledCanvas& canvas, i32 x, i32 y, u32 color, f32 opacity,
-                 const Selection* selection) {
-    // Check selection mask
-    if (selection && selection->hasSelection) {
-        if (x < 0 || y < 0 ||
-            x >= static_cast<i32>(selection->width) ||
-            y >= static_cast<i32>(selection->height)) return;
-        if (selection->getValue(x, y) == 0) return;
-    }
+                 const Selection* selection, const Matrix3x2* layerToDoc) {
+    // Check selection mask (transform to document space if needed)
+    f32 selAlpha = getSelectionAlpha(selection, x, y, layerToDoc);
+    if (selAlpha <= 0.0f) return;
 
     u8 cr, cg, cb, ca;
     Blend::unpack(color, cr, cg, cb, ca);
-    u8 newAlpha = static_cast<u8>(std::min(255.0f, ca * opacity));
+    u8 newAlpha = static_cast<u8>(std::min(255.0f, ca * opacity * selAlpha));
     u32 finalColor = Blend::pack(cr, cg, cb, newAlpha);
 
     canvas.alphaBlendPixel(x, y, finalColor);
 }
 
 void pencilErase(TiledCanvas& canvas, i32 x, i32 y, f32 opacity,
-                 const Selection* selection) {
-    // Check selection mask
-    if (selection && selection->hasSelection) {
-        if (x < 0 || y < 0 ||
-            x >= static_cast<i32>(selection->width) ||
-            y >= static_cast<i32>(selection->height)) return;
-        if (selection->getValue(x, y) == 0) return;
-    }
+                 const Selection* selection, const Matrix3x2* layerToDoc) {
+    // Check selection mask (transform to document space if needed)
+    f32 selAlpha = getSelectionAlpha(selection, x, y, layerToDoc);
+    if (selAlpha <= 0.0f) return;
 
     u32 pixel = canvas.getPixel(x, y);
     u8 r, g, b, a;
     Blend::unpack(pixel, r, g, b, a);
 
-    f32 newAlpha = a * (1.0f - opacity);
+    f32 newAlpha = a * (1.0f - opacity * selAlpha);
     a = static_cast<u8>(std::max(0.0f, newAlpha));
 
     canvas.setPixel(x, y, Blend::pack(r, g, b, a));
 }
 
 void pencilLine(TiledCanvas& canvas, i32 x0, i32 y0, i32 x1, i32 y1,
-                u32 color, f32 opacity, const Selection* selection) {
+                u32 color, f32 opacity, const Selection* selection,
+                const Matrix3x2* layerToDoc) {
     // Bresenham's line algorithm
     i32 dx = std::abs(x1 - x0);
     i32 dy = -std::abs(y1 - y0);
@@ -392,7 +401,7 @@ void pencilLine(TiledCanvas& canvas, i32 x0, i32 y0, i32 x1, i32 y1,
     i32 err = dx + dy;
 
     while (true) {
-        pencilPixel(canvas, x0, y0, color, opacity, selection);
+        pencilPixel(canvas, x0, y0, color, opacity, selection, layerToDoc);
 
         if (x0 == x1 && y0 == y1) break;
 
@@ -409,7 +418,8 @@ void pencilLine(TiledCanvas& canvas, i32 x0, i32 y0, i32 x1, i32 y1,
 }
 
 void pencilEraseLine(TiledCanvas& canvas, i32 x0, i32 y0, i32 x1, i32 y1,
-                     f32 opacity, const Selection* selection) {
+                     f32 opacity, const Selection* selection,
+                     const Matrix3x2* layerToDoc) {
     // Bresenham's line algorithm
     i32 dx = std::abs(x1 - x0);
     i32 dy = -std::abs(y1 - y0);
@@ -418,7 +428,7 @@ void pencilEraseLine(TiledCanvas& canvas, i32 x0, i32 y0, i32 x1, i32 y1,
     i32 err = dx + dy;
 
     while (true) {
-        pencilErase(canvas, x0, y0, opacity, selection);
+        pencilErase(canvas, x0, y0, opacity, selection, layerToDoc);
 
         if (x0 == x1 && y0 == y1) break;
 
@@ -803,14 +813,15 @@ void strokeLineToBufferWithDynamics(
     u32 color, f32 flow, f32 spacing,
     f32 baseSize, f32 baseAngle, f32 hardness,
     const BrushDynamics& dynamics,
-    BlendMode mode, const Selection* selection) {
+    BlendMode mode, const Selection* selection,
+    const Matrix3x2* layerToDoc) {
 
     Vec2 delta = to - from;
     f32 distance = delta.length();
 
     if (distance < 0.001f) {
         stampToBufferWithDynamics(buffer, baseStamp, tip, to, color, flow,
-                                  baseSize, baseAngle, hardness, dynamics, mode, selection);
+                                  baseSize, baseAngle, hardness, dynamics, mode, selection, layerToDoc);
         return;
     }
 
@@ -837,7 +848,7 @@ void strokeLineToBufferWithDynamics(
         }
 
         stampToBufferWithDynamics(buffer, baseStamp, tip, pos, color, flow,
-                                  baseSize, baseAngle, hardness, dynamics, mode, selection);
+                                  baseSize, baseAngle, hardness, dynamics, mode, selection, layerToDoc);
     }
 }
 
@@ -849,7 +860,8 @@ void stampToBufferWithDynamics(
     u32 color, f32 flow,
     f32 baseSize, f32 baseAngle, f32 hardness,
     const BrushDynamics& dynamics,
-    BlendMode mode, const Selection* selection) {
+    BlendMode mode, const Selection* selection,
+    const Matrix3x2* layerToDoc) {
 
     // Apply size jitter
     f32 size = baseSize;
@@ -879,7 +891,7 @@ void stampToBufferWithDynamics(
     }
 
     // Use the stamp
-    stampToBuffer(buffer, *stamp, pos, color, flow, mode, selection);
+    stampToBuffer(buffer, *stamp, pos, color, flow, mode, selection, layerToDoc);
 }
 
 } // namespace BrushRenderer

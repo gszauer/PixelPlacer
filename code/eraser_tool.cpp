@@ -36,8 +36,9 @@ void EraserTool::onMouseDown(Document& doc, const ToolEvent& e) {
     lastPos = e.position;
     strokeLayer = layer;
 
-    // Convert document position to layer position using inverse transform
-    Matrix3x2 invMat = layer->transform.toMatrix(layer->canvas.width, layer->canvas.height).inverted();
+    // Compute layer-to-document and document-to-layer transforms
+    Matrix3x2 layerToDoc = layer->transform.toMatrix(layer->canvas.width, layer->canvas.height);
+    Matrix3x2 invMat = layerToDoc.inverted();
     Vec2 layerPos = invMat.transform(e.position);
     lastLayerPos = layerPos;
 
@@ -58,13 +59,16 @@ void EraserTool::onMouseDown(Document& doc, const ToolEvent& e) {
     // Get selection pointer (nullptr if no selection)
     const Selection* sel = doc.selection.hasSelection ? &doc.selection : nullptr;
 
+    // Pass layer-to-doc transform for selection checking if layer is transformed
+    const Matrix3x2* selTransform = layer->transform.isIdentity() ? nullptr : &layerToDoc;
+
     if (isPencilMode()) {
         // Pencil mode: erase directly (no beading issue with single pixels)
         i32 px = static_cast<i32>(std::floor(layerPos.x));
         i32 py = static_cast<i32>(std::floor(layerPos.y));
         lastPixelX = px;
         lastPixelY = py;
-        BrushRenderer::pencilErase(layer->canvas, px, py, effectiveFlow, sel);
+        BrushRenderer::pencilErase(layer->canvas, px, py, effectiveFlow, sel, selTransform);
         doc.notifyChanged(Rect(e.position.x - 1, e.position.y - 1, 3, 3));
     } else {
         // Create stroke buffer for this stroke
@@ -76,7 +80,7 @@ void EraserTool::onMouseDown(Document& doc, const ToolEvent& e) {
         }
 
         // Stamp erase amount to buffer (not directly to canvas!)
-        BrushRenderer::eraseStampToBuffer(*strokeBuffer, currentStamp, layerPos, effectiveFlow, sel);
+        BrushRenderer::eraseStampToBuffer(*strokeBuffer, currentStamp, layerPos, effectiveFlow, sel, selTransform);
 
         // Track stroke bounds
         f32 r = effectiveSize / 2.0f + 1;
@@ -95,8 +99,9 @@ void EraserTool::onMouseDrag(Document& doc, const ToolEvent& e) {
     updateFromAppState();
     ensureStamp();
 
-    // Convert document positions to layer positions using inverse transform
-    Matrix3x2 invMat = layer->transform.toMatrix(layer->canvas.width, layer->canvas.height).inverted();
+    // Compute layer-to-document and document-to-layer transforms
+    Matrix3x2 layerToDoc = layer->transform.toMatrix(layer->canvas.width, layer->canvas.height);
+    Matrix3x2 invMat = layerToDoc.inverted();
     Vec2 layerPosTo = invMat.transform(e.position);
 
     // Apply pressure curve
@@ -116,12 +121,15 @@ void EraserTool::onMouseDrag(Document& doc, const ToolEvent& e) {
     // Get selection pointer (nullptr if no selection)
     const Selection* sel = doc.selection.hasSelection ? &doc.selection : nullptr;
 
+    // Pass layer-to-doc transform for selection checking if layer is transformed
+    const Matrix3x2* selTransform = layer->transform.isIdentity() ? nullptr : &layerToDoc;
+
     Rect dirty;
     if (isPencilMode()) {
         // Pencil mode: pixel-perfect line directly to canvas
         i32 px = static_cast<i32>(std::floor(layerPosTo.x));
         i32 py = static_cast<i32>(std::floor(layerPosTo.y));
-        BrushRenderer::pencilEraseLine(layer->canvas, lastPixelX, lastPixelY, px, py, effectiveFlow, sel);
+        BrushRenderer::pencilEraseLine(layer->canvas, lastPixelX, lastPixelY, px, py, effectiveFlow, sel, selTransform);
         dirty = Rect(
             std::min(lastPos.x, e.position.x) - 1,
             std::min(lastPos.y, e.position.y) - 1,
@@ -140,7 +148,7 @@ void EraserTool::onMouseDrag(Document& doc, const ToolEvent& e) {
 
         // Erase line to buffer (not directly to canvas!)
         BrushRenderer::eraseLineToBuffer(*strokeBuffer, currentStamp, lastLayerPos, layerPosTo,
-            effectiveFlow, spacing, sel);
+            effectiveFlow, spacing, sel, selTransform);
 
         // Expand stroke bounds
         f32 r = effectiveSize / 2.0f + 1;
@@ -177,8 +185,29 @@ void EraserTool::onMouseUp(Document& doc, const ToolEvent& e) {
         // Prune empty tiles after erasing
         strokeLayer->canvas.pruneEmptyTiles();
 
-        // Notify full stroke bounds changed
-        doc.notifyChanged(strokeBounds);
+        // Transform stroke bounds from layer space to document space for dirty rect
+        Matrix3x2 layerToDoc = strokeLayer->transform.toMatrix(
+            strokeLayer->canvas.width, strokeLayer->canvas.height);
+
+        // Transform all four corners of the bounds and compute bounding box
+        Vec2 corners[4] = {
+            layerToDoc.transform(Vec2(strokeBounds.x, strokeBounds.y)),
+            layerToDoc.transform(Vec2(strokeBounds.x + strokeBounds.w, strokeBounds.y)),
+            layerToDoc.transform(Vec2(strokeBounds.x, strokeBounds.y + strokeBounds.h)),
+            layerToDoc.transform(Vec2(strokeBounds.x + strokeBounds.w, strokeBounds.y + strokeBounds.h))
+        };
+
+        f32 minX = corners[0].x, maxX = corners[0].x;
+        f32 minY = corners[0].y, maxY = corners[0].y;
+        for (int i = 1; i < 4; ++i) {
+            minX = std::min(minX, corners[i].x);
+            maxX = std::max(maxX, corners[i].x);
+            minY = std::min(minY, corners[i].y);
+            maxY = std::max(maxY, corners[i].y);
+        }
+
+        Rect docBounds(minX, minY, maxX - minX, maxY - minY);
+        doc.notifyChanged(docBounds);
     } else if (isPencilMode() && strokeLayer) {
         // Prune empty tiles for pencil mode too
         strokeLayer->canvas.pruneEmptyTiles();

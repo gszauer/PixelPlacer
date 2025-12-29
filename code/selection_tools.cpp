@@ -218,15 +218,26 @@ void MagicWandTool::onMouseDown(Document& doc, const ToolEvent& e) {
     f32 tolerance = state.wandTolerance;
     bool contiguous = state.wandContiguous;
 
-    i32 x = static_cast<i32>(e.position.x);
-    i32 y = static_cast<i32>(e.position.y);
+    // Document coordinates from click
+    i32 docX = static_cast<i32>(e.position.x);
+    i32 docY = static_cast<i32>(e.position.y);
 
-    if (x < 0 || y < 0 || x >= static_cast<i32>(layer->canvas.width) ||
-        y >= static_cast<i32>(layer->canvas.height)) {
+    // Check document bounds
+    if (docX < 0 || docY < 0 || docX >= static_cast<i32>(doc.width) ||
+        docY >= static_cast<i32>(doc.height)) {
         return;
     }
 
-    u32 targetColor = layer->canvas.getPixel(x, y);
+    // Compute layer transforms
+    Matrix3x2 layerToDoc = layer->transform.toMatrix(layer->canvas.width, layer->canvas.height);
+    Matrix3x2 docToLayer = layerToDoc.inverted();
+
+    // Transform click position to layer space
+    Vec2 layerPos = docToLayer.transform(Vec2(static_cast<f32>(docX), static_cast<f32>(docY)));
+    i32 layerX = static_cast<i32>(std::floor(layerPos.x));
+    i32 layerY = static_cast<i32>(std::floor(layerPos.y));
+
+    u32 targetColor = layer->canvas.getPixel(layerX, layerY);
 
     bool addMode = e.shiftHeld;
     bool subtractMode = e.altHeld;
@@ -236,9 +247,11 @@ void MagicWandTool::onMouseDown(Document& doc, const ToolEvent& e) {
     }
 
     if (contiguous) {
-        floodSelect(doc.selection, layer->canvas, x, y, targetColor, tolerance, addMode, subtractMode);
+        floodSelectTransformed(doc.selection, layer->canvas, layerX, layerY, targetColor,
+                               tolerance, addMode, subtractMode, layerToDoc);
     } else {
-        globalSelect(doc.selection, layer->canvas, targetColor, tolerance, addMode, subtractMode);
+        globalSelectTransformed(doc.selection, layer->canvas, targetColor,
+                                tolerance, addMode, subtractMode, layerToDoc);
     }
 
     doc.selection.updateBounds();
@@ -319,4 +332,101 @@ void MagicWandTool::globalSelect(Selection& sel, const TiledCanvas& canvas,
             }
         }
     }
+}
+
+void MagicWandTool::floodSelectTransformed(Selection& sel, const TiledCanvas& canvas,
+                                            i32 startX, i32 startY, u32 targetColor,
+                                            f32 tolerance, bool add, bool subtract,
+                                            const Matrix3x2& layerToDoc) {
+    // Calculate bounds in layer space by inverse-transforming document corners
+    // This prevents infinite flood fill on transparent areas
+    Matrix3x2 docToLayer = layerToDoc.inverted();
+
+    // Transform all four document corners to layer space to find bounds
+    Vec2 corners[4] = {
+        docToLayer.transform(Vec2(0, 0)),
+        docToLayer.transform(Vec2(static_cast<f32>(sel.width), 0)),
+        docToLayer.transform(Vec2(0, static_cast<f32>(sel.height))),
+        docToLayer.transform(Vec2(static_cast<f32>(sel.width), static_cast<f32>(sel.height)))
+    };
+
+    i32 minX = static_cast<i32>(std::floor(std::min({corners[0].x, corners[1].x, corners[2].x, corners[3].x}))) - 1;
+    i32 maxX = static_cast<i32>(std::ceil(std::max({corners[0].x, corners[1].x, corners[2].x, corners[3].x}))) + 1;
+    i32 minY = static_cast<i32>(std::floor(std::min({corners[0].y, corners[1].y, corners[2].y, corners[3].y}))) - 1;
+    i32 maxY = static_cast<i32>(std::ceil(std::max({corners[0].y, corners[1].y, corners[2].y, corners[3].y}))) + 1;
+
+    // Use a set to track visited pixels (supports any coordinates including negative)
+    std::unordered_set<u64> visited;
+
+    auto packCoord = [](i32 x, i32 y) -> u64 {
+        return (static_cast<u64>(static_cast<u32>(y)) << 32) |
+               static_cast<u64>(static_cast<u32>(x));
+    };
+
+    std::queue<std::pair<i32, i32>> queue;
+    queue.push({startX, startY});
+    visited.insert(packCoord(startX, startY));
+
+    while (!queue.empty()) {
+        auto [x, y] = queue.front();
+        queue.pop();
+
+        u32 currentColor = canvas.getPixel(x, y);
+        if (colorDifference(currentColor, targetColor) > tolerance) continue;
+
+        // Transform layer coords to document coords for selection
+        Vec2 docPos = layerToDoc.transform(Vec2(static_cast<f32>(x), static_cast<f32>(y)));
+        i32 docX = static_cast<i32>(std::floor(docPos.x));
+        i32 docY = static_cast<i32>(std::floor(docPos.y));
+
+        // Only set selection if within document bounds
+        if (docX >= 0 && docY >= 0 &&
+            docX < static_cast<i32>(sel.width) && docY < static_cast<i32>(sel.height)) {
+            if (subtract) {
+                sel.setValue(docX, docY, 0);
+            } else {
+                sel.setValue(docX, docY, 255);
+            }
+        }
+
+        const i32 dx[] = {-1, 1, 0, 0};
+        const i32 dy[] = {0, 0, -1, 1};
+
+        for (i32 i = 0; i < 4; ++i) {
+            i32 nx = x + dx[i];
+            i32 ny = y + dy[i];
+
+            // Bounds check in layer space
+            if (nx < minX || nx > maxX || ny < minY || ny > maxY) continue;
+
+            u64 key = packCoord(nx, ny);
+            if (visited.find(key) != visited.end()) continue;
+
+            u32 neighborColor = canvas.getPixel(nx, ny);
+            if (colorDifference(neighborColor, targetColor) <= tolerance) {
+                visited.insert(key);
+                queue.push({nx, ny});
+            }
+        }
+    }
+}
+
+void MagicWandTool::globalSelectTransformed(Selection& sel, const TiledCanvas& canvas,
+                                             u32 targetColor, f32 tolerance, bool add, bool subtract,
+                                             const Matrix3x2& layerToDoc) {
+    // Iterate over existing tiles and select matching pixels
+    canvas.forEachPixel([&](u32 x, u32 y, u32 pixel) {
+        if (colorDifference(pixel, targetColor) <= tolerance) {
+            // Transform layer coords to document coords for selection
+            Vec2 docPos = layerToDoc.transform(Vec2(static_cast<f32>(x), static_cast<f32>(y)));
+            i32 docX = static_cast<i32>(std::floor(docPos.x));
+            i32 docY = static_cast<i32>(std::floor(docPos.y));
+
+            if (subtract) {
+                sel.setValue(docX, docY, 0);
+            } else {
+                sel.setValue(docX, docY, 255);
+            }
+        }
+    });
 }

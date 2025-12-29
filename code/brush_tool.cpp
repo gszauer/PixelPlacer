@@ -58,8 +58,9 @@ void BrushTool::onMouseDown(Document& doc, const ToolEvent& e) {
     lastPos = e.position;
     strokeLayer = layer;
 
-    // Convert document position to layer position using inverse transform
-    Matrix3x2 invMat = layer->transform.toMatrix(layer->canvas.width, layer->canvas.height).inverted();
+    // Compute layer-to-document and document-to-layer transforms
+    Matrix3x2 layerToDoc = layer->transform.toMatrix(layer->canvas.width, layer->canvas.height);
+    Matrix3x2 invMat = layerToDoc.inverted();
     Vec2 layerPos = invMat.transform(e.position);
     lastLayerPos = layerPos;
 
@@ -83,13 +84,16 @@ void BrushTool::onMouseDown(Document& doc, const ToolEvent& e) {
     // Get selection pointer (nullptr if no selection)
     const Selection* sel = doc.selection.hasSelection ? &doc.selection : nullptr;
 
+    // Pass layer-to-doc transform for selection checking if layer is transformed
+    const Matrix3x2* selTransform = layer->transform.isIdentity() ? nullptr : &layerToDoc;
+
     if (isPencilMode()) {
         // Pencil mode: render directly to canvas (no beading issue with single pixels)
         i32 px = static_cast<i32>(std::floor(layerPos.x));
         i32 py = static_cast<i32>(std::floor(layerPos.y));
         lastPixelX = px;
         lastPixelY = py;
-        BrushRenderer::pencilPixel(layer->canvas, px, py, strokeColor, effectiveFlow, sel);
+        BrushRenderer::pencilPixel(layer->canvas, px, py, strokeColor, effectiveFlow, sel, selTransform);
         doc.notifyChanged(Rect(e.position.x - 1, e.position.y - 1, 3, 3));
     } else {
         // Create stroke buffer for this stroke
@@ -106,10 +110,10 @@ void BrushTool::onMouseDown(Document& doc, const ToolEvent& e) {
         if (dynamics.hasAnyDynamics()) {
             BrushRenderer::stampToBufferWithDynamics(*strokeBuffer, currentStamp, currentTip,
                 layerPos, strokeColor, effectiveFlow, effectiveSize, currentAngle, hardness,
-                dynamics, BlendMode::Normal, sel);
+                dynamics, BlendMode::Normal, sel, selTransform);
         } else {
             BrushRenderer::stampToBuffer(*strokeBuffer, currentStamp, layerPos, strokeColor,
-                effectiveFlow, BlendMode::Normal, sel);
+                effectiveFlow, BlendMode::Normal, sel, selTransform);
         }
 
         // Track stroke bounds (add extra margin for scattering)
@@ -130,8 +134,9 @@ void BrushTool::onMouseDrag(Document& doc, const ToolEvent& e) {
     updateFromAppState();
     ensureStamp();
 
-    // Convert document positions to layer positions using inverse transform
-    Matrix3x2 invMat = layer->transform.toMatrix(layer->canvas.width, layer->canvas.height).inverted();
+    // Compute layer-to-document and document-to-layer transforms
+    Matrix3x2 layerToDoc = layer->transform.toMatrix(layer->canvas.width, layer->canvas.height);
+    Matrix3x2 invMat = layerToDoc.inverted();
     Vec2 layerPosTo = invMat.transform(e.position);
 
     // Apply pressure curve
@@ -151,13 +156,16 @@ void BrushTool::onMouseDrag(Document& doc, const ToolEvent& e) {
     // Get selection pointer (nullptr if no selection)
     const Selection* sel = doc.selection.hasSelection ? &doc.selection : nullptr;
 
+    // Pass layer-to-doc transform for selection checking if layer is transformed
+    const Matrix3x2* selTransform = layer->transform.isIdentity() ? nullptr : &layerToDoc;
+
     Rect dirty;
     if (isPencilMode()) {
         // Pencil mode: pixel-perfect line directly to canvas
         i32 px = static_cast<i32>(std::floor(layerPosTo.x));
         i32 py = static_cast<i32>(std::floor(layerPosTo.y));
         BrushRenderer::pencilLine(layer->canvas, lastPixelX, lastPixelY, px, py,
-            strokeColor, effectiveFlow, sel);
+            strokeColor, effectiveFlow, sel, selTransform);
         dirty = Rect(
             std::min(lastPos.x, e.position.x) - 1,
             std::min(lastPos.y, e.position.y) - 1,
@@ -180,10 +188,10 @@ void BrushTool::onMouseDrag(Document& doc, const ToolEvent& e) {
         if (dynamics.hasAnyDynamics()) {
             BrushRenderer::strokeLineToBufferWithDynamics(*strokeBuffer, currentStamp, currentTip,
                 lastLayerPos, layerPosTo, strokeColor, effectiveFlow, spacing,
-                effectiveSize, currentAngle, hardness, dynamics, BlendMode::Normal, sel);
+                effectiveSize, currentAngle, hardness, dynamics, BlendMode::Normal, sel, selTransform);
         } else {
             BrushRenderer::strokeLineToBuffer(*strokeBuffer, currentStamp, lastLayerPos, layerPosTo,
-                strokeColor, effectiveFlow, spacing, BlendMode::Normal, sel);
+                strokeColor, effectiveFlow, spacing, BlendMode::Normal, sel, selTransform);
         }
 
         // Expand stroke bounds (add extra margin for scattering)
@@ -219,8 +227,29 @@ void BrushTool::onMouseUp(Document& doc, const ToolEvent& e) {
         // Composite the stroke buffer onto the layer with stroke opacity
         BrushRenderer::compositeStrokeToLayer(strokeLayer->canvas, *strokeBuffer, opacity, BlendMode::Normal);
 
-        // Notify full stroke bounds changed
-        doc.notifyChanged(strokeBounds);
+        // Transform stroke bounds from layer space to document space for dirty rect
+        Matrix3x2 layerToDoc = strokeLayer->transform.toMatrix(
+            strokeLayer->canvas.width, strokeLayer->canvas.height);
+
+        // Transform all four corners of the bounds and compute bounding box
+        Vec2 corners[4] = {
+            layerToDoc.transform(Vec2(strokeBounds.x, strokeBounds.y)),
+            layerToDoc.transform(Vec2(strokeBounds.x + strokeBounds.w, strokeBounds.y)),
+            layerToDoc.transform(Vec2(strokeBounds.x, strokeBounds.y + strokeBounds.h)),
+            layerToDoc.transform(Vec2(strokeBounds.x + strokeBounds.w, strokeBounds.y + strokeBounds.h))
+        };
+
+        f32 minX = corners[0].x, maxX = corners[0].x;
+        f32 minY = corners[0].y, maxY = corners[0].y;
+        for (int i = 1; i < 4; ++i) {
+            minX = std::min(minX, corners[i].x);
+            maxX = std::max(maxX, corners[i].x);
+            minY = std::min(minY, corners[i].y);
+            maxY = std::max(maxY, corners[i].y);
+        }
+
+        Rect docBounds(minX, minY, maxX - minX, maxY - minY);
+        doc.notifyChanged(docBounds);
     }
 
     // Cleanup

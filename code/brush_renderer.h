@@ -49,14 +49,16 @@ namespace BrushRenderer {
     void stampToBuffer(TiledCanvas& buffer, const BrushStamp& brush,
                        const Vec2& pos, u32 color, f32 flow,
                        BlendMode mode = BlendMode::Normal,
-                       const Selection* selection = nullptr);
+                       const Selection* selection = nullptr,
+                       const Matrix3x2* layerToDoc = nullptr);
 
     // Stroke line to buffer with flow
     void strokeLineToBuffer(TiledCanvas& buffer, const BrushStamp& brush,
                             const Vec2& from, const Vec2& to, u32 color,
                             f32 flow, f32 spacing,
                             BlendMode mode = BlendMode::Normal,
-                            const Selection* selection = nullptr);
+                            const Selection* selection = nullptr,
+                            const Matrix3x2* layerToDoc = nullptr);
 
     // Composite stroke buffer onto layer canvas with opacity
     void compositeStrokeToLayer(TiledCanvas& layer, const TiledCanvas& stroke,
@@ -65,11 +67,13 @@ namespace BrushRenderer {
     // Erase functions
     void eraseStampToBuffer(TiledCanvas& buffer, const BrushStamp& brush,
                             const Vec2& pos, f32 flow,
-                            const Selection* selection = nullptr);
+                            const Selection* selection = nullptr,
+                            const Matrix3x2* layerToDoc = nullptr);
 
     void eraseLineToBuffer(TiledCanvas& buffer, const BrushStamp& brush,
                            const Vec2& from, const Vec2& to, f32 flow, f32 spacing,
-                           const Selection* selection = nullptr);
+                           const Selection* selection = nullptr,
+                           const Matrix3x2* layerToDoc = nullptr);
 
     void compositeEraseBufferToLayer(TiledCanvas& layer, const TiledCanvas& eraseBuffer,
                                      f32 opacity);
@@ -90,17 +94,21 @@ namespace BrushRenderer {
 
     // Pencil mode functions
     void pencilPixel(TiledCanvas& canvas, i32 x, i32 y, u32 color, f32 opacity,
-                     const Selection* selection = nullptr);
+                     const Selection* selection = nullptr,
+                     const Matrix3x2* layerToDoc = nullptr);
 
     void pencilErase(TiledCanvas& canvas, i32 x, i32 y, f32 opacity,
-                     const Selection* selection = nullptr);
+                     const Selection* selection = nullptr,
+                     const Matrix3x2* layerToDoc = nullptr);
 
     void pencilLine(TiledCanvas& canvas, i32 x0, i32 y0, i32 x1, i32 y1,
                     u32 color, f32 opacity,
-                    const Selection* selection = nullptr);
+                    const Selection* selection = nullptr,
+                    const Matrix3x2* layerToDoc = nullptr);
 
     void pencilEraseLine(TiledCanvas& canvas, i32 x0, i32 y0, i32 x1, i32 y1,
-                         f32 opacity, const Selection* selection = nullptr);
+                         f32 opacity, const Selection* selection = nullptr,
+                         const Matrix3x2* layerToDoc = nullptr);
 
     // Opacity-limited functions
     void stampWithOpacityLimit(TiledCanvas& canvas, const BrushStamp& brush,
@@ -187,7 +195,8 @@ namespace BrushRenderer {
         f32 baseSize, f32 baseAngle, f32 hardness,
         const BrushDynamics& dynamics,
         BlendMode mode = BlendMode::Normal,
-        const Selection* selection = nullptr);
+        const Selection* selection = nullptr,
+        const Matrix3x2* layerToDoc = nullptr);
 
     void stampToBufferWithDynamics(
         TiledCanvas& buffer,
@@ -198,7 +207,8 @@ namespace BrushRenderer {
         f32 baseSize, f32 baseAngle, f32 hardness,
         const BrushDynamics& dynamics,
         BlendMode mode = BlendMode::Normal,
-        const Selection* selection = nullptr);
+        const Selection* selection = nullptr,
+        const Matrix3x2* layerToDoc = nullptr);
 }
 
 #endif

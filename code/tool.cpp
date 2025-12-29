@@ -549,19 +549,26 @@ void MoveTool::onMouseUp(Document& doc, const ToolEvent& e) {
             i32 offsetX = static_cast<i32>(std::round(doc.floatingContent.currentOffset.x));
             i32 offsetY = static_cast<i32>(std::round(doc.floatingContent.currentOffset.y));
 
+            // Compute document-to-layer transform
+            Matrix3x2 layerToDoc = layer->transform.toMatrix(layer->canvas.width, layer->canvas.height);
+            Matrix3x2 docToLayer = layerToDoc.inverted();
+
             // Paste floating pixels back to layer at new position
             Recti origBounds = doc.floatingContent.originalBounds;
             for (i32 y = 0; y < static_cast<i32>(floatingPixels->height); ++y) {
                 for (i32 x = 0; x < static_cast<i32>(floatingPixels->width); ++x) {
                     u32 pixel = floatingPixels->getPixel(x, y);
                     if ((pixel & 0xFF) > 0) {
-                        i32 destX = origBounds.x + x + offsetX;
-                        i32 destY = origBounds.y + y + offsetY;
-                        if (destX >= 0 && destY >= 0 &&
-                            destX < static_cast<i32>(layer->canvas.width) &&
-                            destY < static_cast<i32>(layer->canvas.height)) {
-                            layer->canvas.setPixel(destX, destY, pixel);
-                        }
+                        // Document coordinates
+                        i32 docX = origBounds.x + x + offsetX;
+                        i32 docY = origBounds.y + y + offsetY;
+
+                        // Transform to layer coordinates
+                        Vec2 layerCoord = docToLayer.transform(Vec2(static_cast<f32>(docX), static_cast<f32>(docY)));
+                        i32 layerX = static_cast<i32>(std::floor(layerCoord.x));
+                        i32 layerY = static_cast<i32>(std::floor(layerCoord.y));
+
+                        layer->canvas.setPixel(layerX, layerY, pixel);
                     }
                 }
             }
@@ -600,18 +607,25 @@ void MoveTool::onKeyDown(Document& doc, i32 keyCode) {
                 // Cancel - put pixels back at original position
                 PixelLayer* pixelLayer = doc.getActivePixelLayer();
                 if (pixelLayer) {
+                    // Compute document-to-layer transform
+                    Matrix3x2 layerToDoc = pixelLayer->transform.toMatrix(pixelLayer->canvas.width, pixelLayer->canvas.height);
+                    Matrix3x2 docToLayer = layerToDoc.inverted();
+
                     Recti origBounds = doc.floatingContent.originalBounds;
                     for (i32 y = 0; y < static_cast<i32>(floatingPixels->height); ++y) {
                         for (i32 x = 0; x < static_cast<i32>(floatingPixels->width); ++x) {
                             u32 pixel = floatingPixels->getPixel(x, y);
                             if ((pixel & 0xFF) > 0) {
-                                i32 destX = origBounds.x + x;
-                                i32 destY = origBounds.y + y;
-                                if (destX >= 0 && destY >= 0 &&
-                                    destX < static_cast<i32>(pixelLayer->canvas.width) &&
-                                    destY < static_cast<i32>(pixelLayer->canvas.height)) {
-                                    pixelLayer->canvas.setPixel(destX, destY, pixel);
-                                }
+                                // Document coordinates (original position)
+                                i32 docX = origBounds.x + x;
+                                i32 docY = origBounds.y + y;
+
+                                // Transform to layer coordinates
+                                Vec2 layerCoord = docToLayer.transform(Vec2(static_cast<f32>(docX), static_cast<f32>(docY)));
+                                i32 layerX = static_cast<i32>(std::floor(layerCoord.x));
+                                i32 layerY = static_cast<i32>(std::floor(layerCoord.y));
+
+                                pixelLayer->canvas.setPixel(layerX, layerY, pixel);
                             }
                         }
                     }

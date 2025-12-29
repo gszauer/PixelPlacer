@@ -6,15 +6,25 @@ This file contains instructions for AI agents (Claude Code, Cursor, etc.) workin
 
 ### Build and Test
 ```bash
+# Linux native build
 ./build_linux.sh        # Release build -> ./pixelplacer
 ./build_linux.sh debug  # Debug build -> ./pixelplacer_debug
+
+# WebAssembly build (requires Emscripten SDK)
+./build_wasm.sh         # Release build -> www/index.html
+./build_wasm.sh debug   # Debug build -> www/index.html
+
+# Test WASM locally
+cd www && python3 -m http.server 8080
+# Open http://localhost:8080
 ```
 
 ### Key Directories
 - All source files are in the `code/` directory
 - Headers: `code/*.h`
 - Implementations: `code/*.cpp`
-- Build output: `pixelplacer`, `pixelplacer_debug` (in root)
+- Linux build output: `pixelplacer`, `pixelplacer_debug` (in root)
+- WASM build output: `www/` (transient, contains index.html, pixelplacer.js, pixelplacer.wasm)
 
 ### Most Frequently Modified Files
 | Task | Primary Files |
@@ -25,6 +35,8 @@ This file contains instructions for AI agents (Claude Code, Cursor, etc.) workin
 | Rendering | `code/compositor.cpp`, `code/framebuffer.cpp` |
 | Configuration | `code/config.h` |
 | Application lifecycle | `code/application.cpp` |
+| Linux platform | `code/platform_linux.cpp`, `code/x11_window.cpp` |
+| WASM platform | `code/platform_wasm.cpp`, `code/wasm_window.cpp`, `code/shell.html` |
 
 ---
 
@@ -385,6 +397,51 @@ menu->addItem("Action", "", [this]() {
 1. Check `getTileCount()` and `getMemoryUsage()`
 2. Look for unnecessary redraws
 3. Profile compositing for large documents
+
+---
+
+## Platform-Specific Code
+
+The application supports two platforms: Linux (X11) and WebAssembly (browser).
+
+### Platform Abstraction
+
+- `PlatformWindow` - abstract interface in `code/platform_window.h`
+- `Platform::` namespace - utility functions in `code/platform.h`
+- Platform implementations selected via `#ifdef` in `code/main.cpp`
+
+### Writing Platform-Specific Code
+
+Use `#ifdef __EMSCRIPTEN__` for WASM-specific code:
+
+```cpp
+#ifdef __EMSCRIPTEN__
+    // WASM-specific: use memory-based file loading
+    std::vector<u8> fileData = Platform::readFile(path);
+    data = stbi_load_from_memory(fileData.data(), fileData.size(), &w, &h, &channels, 4);
+#else
+    // Linux: direct filesystem access
+    data = stbi_load(path.c_str(), &w, &h, &channels, 4);
+#endif
+```
+
+### WASM Considerations
+
+1. **No filesystem**: Files come from JavaScript via `Platform::readFile()`. File dialogs trigger browser file picker, data is passed to WASM memory.
+
+2. **Async with ASYNCIFY**: Emscripten's ASYNCIFY allows sync-looking code to await JS promises. Used for file dialogs and clipboard.
+
+3. **File save = download**: `Platform::writeFile()` with `__download__:` prefix triggers browser download.
+
+4. **Event handling**: Browser events are queued via JavaScript and processed in C++ main loop. See `code/shell.html` for JS event bindings.
+
+5. **Canvas rendering**: Framebuffer is copied to HTML canvas via `js_render_frame()` in shell.html.
+
+### Adding Platform-Specific Features
+
+1. Add function declaration to `code/platform.h`
+2. Implement in both `code/platform_linux.cpp` and `code/platform_wasm.cpp`
+3. For WASM, may need JavaScript interop via `EM_ASM` or exported functions
 
 ---
 

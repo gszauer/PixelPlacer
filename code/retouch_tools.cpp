@@ -1,5 +1,25 @@
 #include "retouch_tools.h"
 
+// Helper to check if a pixel is within selection (in document space)
+static inline bool isInSelection(const Selection* sel, i32 layerX, i32 layerY,
+                                  const Matrix3x2& layerToDoc) {
+    if (!sel || !sel->hasSelection) return true;
+
+    // Transform layer coords to document coords
+    Vec2 docPos = layerToDoc.transform(Vec2(static_cast<f32>(layerX), static_cast<f32>(layerY)));
+    i32 docX = static_cast<i32>(std::floor(docPos.x));
+    i32 docY = static_cast<i32>(std::floor(docPos.y));
+
+    // Check bounds
+    if (docX < 0 || docY < 0 ||
+        docX >= static_cast<i32>(sel->width) ||
+        docY >= static_cast<i32>(sel->height)) {
+        return false;
+    }
+
+    return sel->getValue(docX, docY) > 0;
+}
+
 // CloneTool implementations
 void CloneTool::onMouseDown(Document& doc, const ToolEvent& e) {
     AppState& state = getAppState();
@@ -32,6 +52,14 @@ void CloneTool::onMouseDown(Document& doc, const ToolEvent& e) {
     stroking = true;
     lastPos = e.position;
     firstStrokePos = e.position;
+    strokeLayer = layer;
+
+    // Compute transforms
+    layerToDocTransform = layer->transform.toMatrix(layer->canvas.width, layer->canvas.height);
+    docToLayerTransform = layerToDocTransform.inverted();
+
+    // Store selection reference
+    strokeSelection = doc.selection.hasSelection ? &doc.selection : nullptr;
 
     // Create snapshot of the layer so we sample from original pixels, not newly cloned ones
     sourceSnapshot = std::make_unique<TiledCanvas>(layer->canvas.width, layer->canvas.height);
@@ -41,17 +69,17 @@ void CloneTool::onMouseDown(Document& doc, const ToolEvent& e) {
         }
     });
 
-    cloneAt(layer->canvas, e.position, e.pressure);
+    cloneAt(layer->canvas, e.position, e.pressure, docToLayerTransform);
     f32 size = state.brushSize;
     doc.notifyChanged(Rect(e.position.x - size, e.position.y - size, size * 2, size * 2));
 }
 
 void CloneTool::onMouseDrag(Document& doc, const ToolEvent& e) {
     AppState& state = getAppState();
-    if (!stroking || !state.cloneSourceSet || !sourceSnapshot) return;
+    if (!stroking || !state.cloneSourceSet || !sourceSnapshot || !strokeLayer) return;
 
-    PixelLayer* layer = doc.getActivePixelLayer();
-    if (!layer || layer->locked) return;
+    PixelLayer* layer = strokeLayer;
+    if (layer->locked) return;
 
     // Clone along the stroke
     Vec2 delta = e.position - lastPos;
@@ -61,7 +89,7 @@ void CloneTool::onMouseDrag(Document& doc, const ToolEvent& e) {
 
     for (i32 i = 1; i <= steps; ++i) {
         Vec2 pos = lastPos + delta * (static_cast<f32>(i) / steps);
-        cloneAt(layer->canvas, pos, e.pressure);
+        cloneAt(layer->canvas, pos, e.pressure, docToLayerTransform);
     }
 
     f32 size = state.brushSize;
@@ -79,6 +107,7 @@ void CloneTool::onMouseDrag(Document& doc, const ToolEvent& e) {
 void CloneTool::onMouseUp(Document& doc, const ToolEvent& e) {
     stroking = false;
     sourceSnapshot.reset();  // Free the snapshot
+    strokeLayer = nullptr;
 }
 
 void CloneTool::renderOverlay(Framebuffer& fb, const Vec2& cursorPos, f32 zoom, const Vec2& pan, const Recti& clipRect) {
@@ -133,14 +162,18 @@ void CloneTool::updateStamp() {
     }
 }
 
-void CloneTool::cloneAt(TiledCanvas& canvas, const Vec2& destPos, f32 pressure) {
+void CloneTool::cloneAt(TiledCanvas& canvas, const Vec2& destPos, f32 pressure, const Matrix3x2& docToLayer) {
     if (!sourceSnapshot) return;
 
     AppState& state = getAppState();
 
-    // Calculate source position: source point + offset from first stroke position
+    // Calculate source position in document space: source point + offset from first stroke position
     Vec2 offset = destPos - firstStrokePos;
-    Vec2 srcPos = state.cloneSourcePos + offset;
+    Vec2 srcDocPos = state.cloneSourcePos + offset;
+
+    // Transform to layer space
+    Vec2 destLayerPos = docToLayer.transform(destPos);
+    Vec2 srcLayerPos = docToLayer.transform(srcDocPos);
 
     // Apply pressure curve
     f32 adjustedPressure = evaluatePressureCurve(pressure, state.pressureCurveCP1, state.pressureCurveCP2);
@@ -168,8 +201,10 @@ void CloneTool::cloneAt(TiledCanvas& canvas, const Vec2& destPos, f32 pressure) 
             break;
     }
 
-    i32 startX = static_cast<i32>(destPos.x - stamp.size / 2.0f);
-    i32 startY = static_cast<i32>(destPos.y - stamp.size / 2.0f);
+    i32 startX = static_cast<i32>(destLayerPos.x - stamp.size / 2.0f);
+    i32 startY = static_cast<i32>(destLayerPos.y - stamp.size / 2.0f);
+    i32 srcStartX = static_cast<i32>(srcLayerPos.x - stamp.size / 2.0f);
+    i32 srcStartY = static_cast<i32>(srcLayerPos.y - stamp.size / 2.0f);
 
     for (u32 by = 0; by < stamp.size; ++by) {
         for (u32 bx = 0; bx < stamp.size; ++bx) {
@@ -178,16 +213,17 @@ void CloneTool::cloneAt(TiledCanvas& canvas, const Vec2& destPos, f32 pressure) 
 
             i32 dx = startX + bx;
             i32 dy = startY + by;
-            i32 sx = static_cast<i32>(srcPos.x - stamp.size / 2.0f) + bx;
-            i32 sy = static_cast<i32>(srcPos.y - stamp.size / 2.0f) + by;
+            i32 sx = srcStartX + bx;
+            i32 sy = srcStartY + by;
 
-            if (dx < 0 || dy < 0 || dx >= static_cast<i32>(canvas.width) ||
-                dy >= static_cast<i32>(canvas.height)) continue;
-            if (sx < 0 || sy < 0 || sx >= static_cast<i32>(sourceSnapshot->width) ||
-                sy >= static_cast<i32>(sourceSnapshot->height)) continue;
+            // Check selection mask (destination must be in selection)
+            if (!isInSelection(strokeSelection, dx, dy, layerToDocTransform)) continue;
 
             // Read from snapshot (original pixels), not the live canvas
+            // TiledCanvas handles any coordinates - returns 0 for non-existent tiles
             u32 srcPixel = sourceSnapshot->getPixel(sx, sy);
+            if ((srcPixel & 0xFF) == 0) continue;  // Skip transparent source pixels
+
             f32 finalAlpha = brushAlpha * opacity * flow;
 
             u8 r, g, b, a;
@@ -207,12 +243,23 @@ void SmudgeTool::onMouseDown(Document& doc, const ToolEvent& e) {
     updateStamp();
     stroking = true;
     lastPos = e.position;
+    strokeLayer = layer;
+
+    // Compute transforms
+    layerToDocTransform = layer->transform.toMatrix(layer->canvas.width, layer->canvas.height);
+    docToLayerTransform = layerToDocTransform.inverted();
+
+    // Store selection reference
+    strokeSelection = doc.selection.hasSelection ? &doc.selection : nullptr;
+
+    // Transform to layer space
+    Vec2 layerPos = docToLayerTransform.transform(e.position);
 
     // Initialize carried color buffer by sampling from canvas
-    sampleCarriedColors(layer->canvas, e.position);
+    sampleCarriedColors(layer->canvas, layerPos);
 
     // Apply first smudge dab
-    smudgeAt(layer->canvas, e.position, e.pressure);
+    smudgeAt(layer->canvas, layerPos, e.pressure);
 
     AppState& state = getAppState();
     f32 size = state.brushSize;
@@ -220,20 +267,24 @@ void SmudgeTool::onMouseDown(Document& doc, const ToolEvent& e) {
 }
 
 void SmudgeTool::onMouseDrag(Document& doc, const ToolEvent& e) {
-    if (!stroking) return;
+    if (!stroking || !strokeLayer) return;
 
-    PixelLayer* layer = doc.getActivePixelLayer();
-    if (!layer || layer->locked) return;
+    PixelLayer* layer = strokeLayer;
+    if (layer->locked) return;
 
-    // Interpolate dabs along stroke
-    Vec2 delta = e.position - lastPos;
+    // Transform positions to layer space
+    Vec2 lastLayerPos = docToLayerTransform.transform(lastPos);
+    Vec2 currLayerPos = docToLayerTransform.transform(e.position);
+
+    // Interpolate dabs along stroke in layer space
+    Vec2 delta = currLayerPos - lastLayerPos;
     f32 distance = delta.length();
     f32 stepSize = std::max(1.0f, stamp.size * 0.25f);
     i32 steps = std::max(1, static_cast<i32>(distance / stepSize));
 
     for (i32 i = 1; i <= steps; ++i) {
-        Vec2 pos = lastPos + delta * (static_cast<f32>(i) / steps);
-        smudgeAt(layer->canvas, pos, e.pressure);
+        Vec2 layerPos = lastLayerPos + delta * (static_cast<f32>(i) / steps);
+        smudgeAt(layer->canvas, layerPos, e.pressure);
     }
 
     AppState& state = getAppState();
@@ -253,6 +304,7 @@ void SmudgeTool::onMouseUp(Document& doc, const ToolEvent& e) {
     stroking = false;
     carriedColors.clear();
     carriedSize = 0;
+    strokeLayer = nullptr;
 }
 
 void SmudgeTool::renderOverlay(Framebuffer& fb, const Vec2& cursorPos, f32 zoom, const Vec2& pan, const Recti& clipRect) {
@@ -282,27 +334,24 @@ void SmudgeTool::updateStamp() {
     }
 }
 
-void SmudgeTool::sampleCarriedColors(TiledCanvas& canvas, const Vec2& pos) {
+void SmudgeTool::sampleCarriedColors(TiledCanvas& canvas, const Vec2& layerPos) {
     carriedSize = stamp.size;
     carriedColors.resize(carriedSize * carriedSize, 0);
 
-    i32 startX = static_cast<i32>(pos.x - stamp.size / 2.0f);
-    i32 startY = static_cast<i32>(pos.y - stamp.size / 2.0f);
+    i32 startX = static_cast<i32>(layerPos.x - stamp.size / 2.0f);
+    i32 startY = static_cast<i32>(layerPos.y - stamp.size / 2.0f);
 
     for (u32 by = 0; by < stamp.size; ++by) {
         for (u32 bx = 0; bx < stamp.size; ++bx) {
             i32 x = startX + bx;
             i32 y = startY + by;
-
-            if (x >= 0 && y >= 0 && x < static_cast<i32>(canvas.width) &&
-                y < static_cast<i32>(canvas.height)) {
-                carriedColors[by * carriedSize + bx] = canvas.getPixel(x, y);
-            }
+            // TiledCanvas handles any coordinates - returns 0 for non-existent tiles
+            carriedColors[by * carriedSize + bx] = canvas.getPixel(x, y);
         }
     }
 }
 
-void SmudgeTool::smudgeAt(TiledCanvas& canvas, const Vec2& pos, f32 pressure) {
+void SmudgeTool::smudgeAt(TiledCanvas& canvas, const Vec2& layerPos, f32 pressure) {
     if (carriedColors.empty()) return;
 
     AppState& state = getAppState();
@@ -335,8 +384,8 @@ void SmudgeTool::smudgeAt(TiledCanvas& canvas, const Vec2& pos, f32 pressure) {
     f32 effectiveStrength = strength * flow;
     f32 pickupRate = 0.5f;  // How much color to pick up from destination
 
-    i32 startX = static_cast<i32>(pos.x - stamp.size / 2.0f);
-    i32 startY = static_cast<i32>(pos.y - stamp.size / 2.0f);
+    i32 startX = static_cast<i32>(layerPos.x - stamp.size / 2.0f);
+    i32 startY = static_cast<i32>(layerPos.y - stamp.size / 2.0f);
 
     for (u32 by = 0; by < stamp.size; ++by) {
         for (u32 bx = 0; bx < stamp.size; ++bx) {
@@ -346,8 +395,8 @@ void SmudgeTool::smudgeAt(TiledCanvas& canvas, const Vec2& pos, f32 pressure) {
             i32 x = startX + bx;
             i32 y = startY + by;
 
-            if (x < 0 || y < 0 || x >= static_cast<i32>(canvas.width) ||
-                y >= static_cast<i32>(canvas.height)) continue;
+            // Check selection mask
+            if (!isInSelection(strokeSelection, x, y, layerToDocTransform)) continue;
 
             // Get carried color (scale index if stamp size changed)
             u32 carriedIdx;
@@ -399,28 +448,43 @@ void DodgeTool::onMouseDown(Document& doc, const ToolEvent& e) {
     updateStamp();
     stroking = true;
     lastPos = e.position;
+    strokeLayer = layer;
 
-    dodgeAt(layer->canvas, e.position, e.pressure);
+    // Compute transforms
+    layerToDocTransform = layer->transform.toMatrix(layer->canvas.width, layer->canvas.height);
+    docToLayerTransform = layerToDocTransform.inverted();
+
+    // Store selection reference
+    strokeSelection = doc.selection.hasSelection ? &doc.selection : nullptr;
+
+    // Transform to layer space
+    Vec2 layerPos = docToLayerTransform.transform(e.position);
+
+    dodgeAt(layer->canvas, layerPos, e.pressure);
     AppState& state = getAppState();
     f32 size = state.brushSize;
     doc.notifyChanged(Rect(e.position.x - size, e.position.y - size, size * 2, size * 2));
 }
 
 void DodgeTool::onMouseDrag(Document& doc, const ToolEvent& e) {
-    if (!stroking) return;
+    if (!stroking || !strokeLayer) return;
 
-    PixelLayer* layer = doc.getActivePixelLayer();
-    if (!layer || layer->locked) return;
+    PixelLayer* layer = strokeLayer;
+    if (layer->locked) return;
 
-    // Interpolate dabs along stroke
-    Vec2 delta = e.position - lastPos;
+    // Transform positions to layer space
+    Vec2 lastLayerPos = docToLayerTransform.transform(lastPos);
+    Vec2 currLayerPos = docToLayerTransform.transform(e.position);
+
+    // Interpolate dabs along stroke in layer space
+    Vec2 delta = currLayerPos - lastLayerPos;
     f32 distance = delta.length();
     f32 stepSize = std::max(1.0f, stamp.size * 0.25f);
     i32 steps = std::max(1, static_cast<i32>(distance / stepSize));
 
     for (i32 i = 1; i <= steps; ++i) {
-        Vec2 pos = lastPos + delta * (static_cast<f32>(i) / steps);
-        dodgeAt(layer->canvas, pos, e.pressure);
+        Vec2 layerPos = lastLayerPos + delta * (static_cast<f32>(i) / steps);
+        dodgeAt(layer->canvas, layerPos, e.pressure);
     }
 
     AppState& state = getAppState();
@@ -438,6 +502,7 @@ void DodgeTool::onMouseDrag(Document& doc, const ToolEvent& e) {
 
 void DodgeTool::onMouseUp(Document& doc, const ToolEvent& e) {
     stroking = false;
+    strokeLayer = nullptr;
 }
 
 void DodgeTool::renderOverlay(Framebuffer& fb, const Vec2& cursorPos, f32 zoom, const Vec2& pan, const Recti& clipRect) {
@@ -466,7 +531,7 @@ void DodgeTool::updateStamp() {
     }
 }
 
-void DodgeTool::dodgeAt(TiledCanvas& canvas, const Vec2& pos, f32 pressure) {
+void DodgeTool::dodgeAt(TiledCanvas& canvas, const Vec2& layerPos, f32 pressure) {
     AppState& state = getAppState();
 
     // Apply pressure curve
@@ -496,8 +561,8 @@ void DodgeTool::dodgeAt(TiledCanvas& canvas, const Vec2& pos, f32 pressure) {
 
     f32 effectiveExposure = exposure * flow * 0.1f;
 
-    i32 startX = static_cast<i32>(pos.x - stamp.size / 2.0f);
-    i32 startY = static_cast<i32>(pos.y - stamp.size / 2.0f);
+    i32 startX = static_cast<i32>(layerPos.x - stamp.size / 2.0f);
+    i32 startY = static_cast<i32>(layerPos.y - stamp.size / 2.0f);
 
     for (u32 by = 0; by < stamp.size; ++by) {
         for (u32 bx = 0; bx < stamp.size; ++bx) {
@@ -507,8 +572,8 @@ void DodgeTool::dodgeAt(TiledCanvas& canvas, const Vec2& pos, f32 pressure) {
             i32 x = startX + bx;
             i32 y = startY + by;
 
-            if (x < 0 || y < 0 || x >= static_cast<i32>(canvas.width) ||
-                y >= static_cast<i32>(canvas.height)) continue;
+            // Check selection mask
+            if (!isInSelection(strokeSelection, x, y, layerToDocTransform)) continue;
 
             u32 pixel = canvas.getPixel(x, y);
             u8 r, g, b, a;
@@ -536,28 +601,43 @@ void BurnTool::onMouseDown(Document& doc, const ToolEvent& e) {
     updateStamp();
     stroking = true;
     lastPos = e.position;
+    strokeLayer = layer;
 
-    burnAt(layer->canvas, e.position, e.pressure);
+    // Compute transforms
+    layerToDocTransform = layer->transform.toMatrix(layer->canvas.width, layer->canvas.height);
+    docToLayerTransform = layerToDocTransform.inverted();
+
+    // Store selection reference
+    strokeSelection = doc.selection.hasSelection ? &doc.selection : nullptr;
+
+    // Transform to layer space
+    Vec2 layerPos = docToLayerTransform.transform(e.position);
+
+    burnAt(layer->canvas, layerPos, e.pressure);
     AppState& state = getAppState();
     f32 size = state.brushSize;
     doc.notifyChanged(Rect(e.position.x - size, e.position.y - size, size * 2, size * 2));
 }
 
 void BurnTool::onMouseDrag(Document& doc, const ToolEvent& e) {
-    if (!stroking) return;
+    if (!stroking || !strokeLayer) return;
 
-    PixelLayer* layer = doc.getActivePixelLayer();
-    if (!layer || layer->locked) return;
+    PixelLayer* layer = strokeLayer;
+    if (layer->locked) return;
 
-    // Interpolate dabs along stroke
-    Vec2 delta = e.position - lastPos;
+    // Transform positions to layer space
+    Vec2 lastLayerPos = docToLayerTransform.transform(lastPos);
+    Vec2 currLayerPos = docToLayerTransform.transform(e.position);
+
+    // Interpolate dabs along stroke in layer space
+    Vec2 delta = currLayerPos - lastLayerPos;
     f32 distance = delta.length();
     f32 stepSize = std::max(1.0f, stamp.size * 0.25f);
     i32 steps = std::max(1, static_cast<i32>(distance / stepSize));
 
     for (i32 i = 1; i <= steps; ++i) {
-        Vec2 pos = lastPos + delta * (static_cast<f32>(i) / steps);
-        burnAt(layer->canvas, pos, e.pressure);
+        Vec2 layerPos = lastLayerPos + delta * (static_cast<f32>(i) / steps);
+        burnAt(layer->canvas, layerPos, e.pressure);
     }
 
     AppState& state = getAppState();
@@ -575,6 +655,7 @@ void BurnTool::onMouseDrag(Document& doc, const ToolEvent& e) {
 
 void BurnTool::onMouseUp(Document& doc, const ToolEvent& e) {
     stroking = false;
+    strokeLayer = nullptr;
 }
 
 void BurnTool::renderOverlay(Framebuffer& fb, const Vec2& cursorPos, f32 zoom, const Vec2& pan, const Recti& clipRect) {
@@ -603,7 +684,7 @@ void BurnTool::updateStamp() {
     }
 }
 
-void BurnTool::burnAt(TiledCanvas& canvas, const Vec2& pos, f32 pressure) {
+void BurnTool::burnAt(TiledCanvas& canvas, const Vec2& layerPos, f32 pressure) {
     AppState& state = getAppState();
 
     // Apply pressure curve
@@ -633,8 +714,8 @@ void BurnTool::burnAt(TiledCanvas& canvas, const Vec2& pos, f32 pressure) {
 
     f32 effectiveExposure = exposure * flow * 0.1f;
 
-    i32 startX = static_cast<i32>(pos.x - stamp.size / 2.0f);
-    i32 startY = static_cast<i32>(pos.y - stamp.size / 2.0f);
+    i32 startX = static_cast<i32>(layerPos.x - stamp.size / 2.0f);
+    i32 startY = static_cast<i32>(layerPos.y - stamp.size / 2.0f);
 
     for (u32 by = 0; by < stamp.size; ++by) {
         for (u32 bx = 0; bx < stamp.size; ++bx) {
@@ -644,8 +725,8 @@ void BurnTool::burnAt(TiledCanvas& canvas, const Vec2& pos, f32 pressure) {
             i32 x = startX + bx;
             i32 y = startY + by;
 
-            if (x < 0 || y < 0 || x >= static_cast<i32>(canvas.width) ||
-                y >= static_cast<i32>(canvas.height)) continue;
+            // Check selection mask
+            if (!isInSelection(strokeSelection, x, y, layerToDocTransform)) continue;
 
             u32 pixel = canvas.getPixel(x, y);
             u8 r, g, b, a;
