@@ -32,11 +32,13 @@ private:
     // Transform-aware fill functions
     static void floodFillTransformed(TiledCanvas& canvas, i32 startX, i32 startY,
                                      u32 targetColor, u32 fillColor, f32 tolerance,
-                                     const Selection* sel, const Matrix3x2& layerToDoc);
+                                     const Selection* sel, const Matrix3x2& layerToDoc,
+                                     i32 docWidth, i32 docHeight);
 
     static void globalFillTransformed(TiledCanvas& canvas, u32 targetColor, u32 fillColor,
                                       f32 tolerance, const Selection* sel,
-                                      const Matrix3x2& layerToDoc);
+                                      const Matrix3x2& layerToDoc,
+                                      i32 docWidth, i32 docHeight);
 };
 
 #endif

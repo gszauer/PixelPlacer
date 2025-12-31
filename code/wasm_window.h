@@ -61,6 +61,7 @@ public:
     void setCursor(i32 resizeDirection) override;
 
     void present(const u32* pixels, u32 w, u32 h) override;
+    void presentPartial(const u32* pixels, u32 w, u32 h, i32 dx, i32 dy, i32 dw, i32 dh) override;
     bool processEvents() override;
 
     // Called from JavaScript to queue events

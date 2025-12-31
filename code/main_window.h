@@ -448,6 +448,10 @@ public:
     void clampSidebarWidth();
     void repositionDialogs();
     Dialog* getActiveDialog();
+
+    // Get selection bounds in screen coordinates for dirty region tracking
+    // Returns empty rect if no selection or no document
+    Recti getSelectionScreenBounds() const;
     bool onMouseDown(const MouseEvent& e) override;
     bool onMouseMove(const MouseEvent& e) override;
     void centerDialog(Dialog* dialog);

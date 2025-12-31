@@ -39,10 +39,10 @@ void FillTool::onMouseDown(Document& doc, const ToolEvent& e) {
 
     if (contiguous) {
         floodFillTransformed(layer->canvas, layerX, layerY, targetColor, fillColor,
-                             tolerance, sel, layerToDoc);
+                             tolerance, sel, layerToDoc, doc.width, doc.height);
     } else {
         globalFillTransformed(layer->canvas, targetColor, fillColor, tolerance,
-                              sel, layerToDoc);
+                              sel, layerToDoc, doc.width, doc.height);
     }
 
     doc.notifyChanged(Rect(0, 0, doc.width, doc.height));
@@ -209,13 +209,19 @@ void FillTool::globalFill(TiledCanvas& canvas, u32 targetColor, u32 fillColor, f
 
 void FillTool::floodFillTransformed(TiledCanvas& canvas, i32 startX, i32 startY,
                                      u32 targetColor, u32 fillColor, f32 tolerance,
-                                     const Selection* sel, const Matrix3x2& layerToDoc) {
+                                     const Selection* sel, const Matrix3x2& layerToDoc,
+                                     i32 docWidth, i32 docHeight) {
     // Use a set to track visited pixels (supports negative coordinates)
     std::unordered_set<u64> visited;
 
     auto packCoord = [](i32 x, i32 y) -> u64 {
         return (static_cast<u64>(static_cast<u32>(y)) << 32) |
                static_cast<u64>(static_cast<u32>(x));
+    };
+
+    // Helper to check if document position is in bounds
+    auto isInDocBounds = [docWidth, docHeight](i32 docX, i32 docY) -> bool {
+        return docX >= 0 && docY >= 0 && docX < docWidth && docY < docHeight;
     };
 
     std::queue<std::pair<i32, i32>> queue;
@@ -226,13 +232,16 @@ void FillTool::floodFillTransformed(TiledCanvas& canvas, i32 startX, i32 startY,
         auto [x, y] = queue.front();
         queue.pop();
 
-        // Transform layer coords to document coords for selection check
-        if (sel) {
-            Vec2 docPos = layerToDoc.transform(Vec2(static_cast<f32>(x), static_cast<f32>(y)));
-            i32 docX = static_cast<i32>(std::floor(docPos.x));
-            i32 docY = static_cast<i32>(std::floor(docPos.y));
-            if (!sel->isSelected(docX, docY)) continue;
-        }
+        // Transform layer coords to document coords
+        Vec2 docPos = layerToDoc.transform(Vec2(static_cast<f32>(x), static_cast<f32>(y)));
+        i32 docX = static_cast<i32>(std::floor(docPos.x));
+        i32 docY = static_cast<i32>(std::floor(docPos.y));
+
+        // Check document bounds (always required to prevent infinite fill)
+        if (!isInDocBounds(docX, docY)) continue;
+
+        // Check selection bounds if active
+        if (sel && !sel->isSelected(docX, docY)) continue;
 
         u32 currentColor = canvas.getPixel(x, y);
         if (colorDifference(currentColor, targetColor) > tolerance) continue;
@@ -250,13 +259,16 @@ void FillTool::floodFillTransformed(TiledCanvas& canvas, i32 startX, i32 startY,
             u64 key = packCoord(nx, ny);
             if (visited.find(key) != visited.end()) continue;
 
+            // Transform neighbor to document coords
+            Vec2 nDocPos = layerToDoc.transform(Vec2(static_cast<f32>(nx), static_cast<f32>(ny)));
+            i32 nDocX = static_cast<i32>(std::floor(nDocPos.x));
+            i32 nDocY = static_cast<i32>(std::floor(nDocPos.y));
+
+            // Check document bounds for neighbor
+            if (!isInDocBounds(nDocX, nDocY)) continue;
+
             // Check selection for neighbor
-            if (sel) {
-                Vec2 docPos = layerToDoc.transform(Vec2(static_cast<f32>(nx), static_cast<f32>(ny)));
-                i32 docX = static_cast<i32>(std::floor(docPos.x));
-                i32 docY = static_cast<i32>(std::floor(docPos.y));
-                if (!sel->isSelected(docX, docY)) continue;
-            }
+            if (sel && !sel->isSelected(nDocX, nDocY)) continue;
 
             u32 neighborColor = canvas.getPixel(nx, ny);
             if (colorDifference(neighborColor, targetColor) <= tolerance) {
@@ -269,16 +281,20 @@ void FillTool::floodFillTransformed(TiledCanvas& canvas, i32 startX, i32 startY,
 
 void FillTool::globalFillTransformed(TiledCanvas& canvas, u32 targetColor, u32 fillColor,
                                       f32 tolerance, const Selection* sel,
-                                      const Matrix3x2& layerToDoc) {
+                                      const Matrix3x2& layerToDoc,
+                                      i32 docWidth, i32 docHeight) {
     // Iterate over existing tiles and fill matching pixels
     canvas.forEachPixel([&](u32 x, u32 y, u32 pixel) {
+        // Transform to document coords
+        Vec2 docPos = layerToDoc.transform(Vec2(static_cast<f32>(x), static_cast<f32>(y)));
+        i32 docX = static_cast<i32>(std::floor(docPos.x));
+        i32 docY = static_cast<i32>(std::floor(docPos.y));
+
+        // Check document bounds
+        if (docX < 0 || docY < 0 || docX >= docWidth || docY >= docHeight) return;
+
         // Check selection in document space
-        if (sel) {
-            Vec2 docPos = layerToDoc.transform(Vec2(static_cast<f32>(x), static_cast<f32>(y)));
-            i32 docX = static_cast<i32>(std::floor(docPos.x));
-            i32 docY = static_cast<i32>(std::floor(docPos.y));
-            if (!sel->isSelected(docX, docY)) return;
-        }
+        if (sel && !sel->isSelected(docX, docY)) return;
 
         if (colorDifference(pixel, targetColor) <= tolerance) {
             canvas.setPixel(x, y, fillColor);

@@ -9,7 +9,12 @@
 
 class Framebuffer {
 public:
+#ifdef __EMSCRIPTEN__
+    // WASM: Store in canvas RGBA byte order for zero-copy blit to JavaScript
+    std::vector<u8> pixels;
+#else
     std::vector<u32> pixels;
+#endif
     u32 width = 0;
     u32 height = 0;
 
@@ -17,7 +22,11 @@ public:
     std::vector<Recti> clipStack;
 
     Framebuffer() = default;
+#ifdef __EMSCRIPTEN__
+    Framebuffer(u32 w, u32 h) : width(w), height(h), pixels(w * h * 4, 0) {}
+#else
     Framebuffer(u32 w, u32 h) : width(w), height(h), pixels(w * h, 0) {}
+#endif
 
     // Clipping support
     void pushClip(const Recti& rect);
@@ -60,10 +69,17 @@ public:
     void blitBlend(const Framebuffer& src, i32 dx, i32 dy);
 
     // Data access
+#ifdef __EMSCRIPTEN__
+    u8* data() { return pixels.data(); }
+    const u8* data() const { return pixels.data(); }
+    size_t size() const { return width * height; }  // Pixel count
+    size_t byteSize() const { return pixels.size(); }
+#else
     u32* data() { return pixels.data(); }
     const u32* data() const { return pixels.data(); }
     size_t size() const { return pixels.size(); }
     size_t byteSize() const { return pixels.size() * sizeof(u32); }
+#endif
 
 private:
     void drawCircleSingle(i32 cx, i32 cy, i32 radius, u32 color);

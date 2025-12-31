@@ -178,6 +178,13 @@ void WasmWindow::present(const u32* pixels, u32 w, u32 h) {
     }, pixels, w, h);
 }
 
+void WasmWindow::presentPartial(const u32* pixels, u32 w, u32 h, i32 dx, i32 dy, i32 dw, i32 dh) {
+    // Call JavaScript to render only the dirty region
+    EM_ASM({
+        js_render_frame_partial($0, $1, $2, $3, $4, $5, $6);
+    }, pixels, w, h, dx, dy, dw, dh);
+}
+
 bool WasmWindow::processEvents() {
     // Process all queued events
     for (const auto& event : eventQueue) {

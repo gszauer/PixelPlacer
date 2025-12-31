@@ -238,17 +238,10 @@ void compositeDocument(Framebuffer& fb, const Document& doc,
 
 void drawCheckerboard(Framebuffer& fb, const Rect& rect,
                       u32 color1, u32 color2) {
-    i32 x0 = std::max(0, static_cast<i32>(rect.x));
-    i32 y0 = std::max(0, static_cast<i32>(rect.y));
-    i32 x1 = std::min(static_cast<i32>(fb.width), static_cast<i32>(rect.x + rect.w));
-    i32 y1 = std::min(static_cast<i32>(fb.height), static_cast<i32>(rect.y + rect.h));
-
-    for (i32 y = y0; y < y1; ++y) {
-        for (i32 x = x0; x < x1; ++x) {
-            bool checker = ((x / Config::CHECKER_SIZE) + (y / Config::CHECKER_SIZE)) % 2;
-            fb.setPixel(x, y, checker ? color1 : color2);
-        }
-    }
+    // Use framebuffer's optimized checkerboard drawing
+    Recti intRect(static_cast<i32>(rect.x), static_cast<i32>(rect.y),
+                  static_cast<i32>(rect.w), static_cast<i32>(rect.h));
+    fb.drawCheckerboard(intRect, color1, color2, Config::CHECKER_SIZE);
 }
 
 u32 applyAdjustment(u32 pixel, const AdjustmentLayer& adj) {

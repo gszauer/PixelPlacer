@@ -40,6 +40,10 @@ struct PlatformWindow {
 
     // Rendering
     virtual void present(const u32* pixels, u32 w, u32 h) = 0;
+    virtual void presentPartial(const u32* pixels, u32 w, u32 h, i32 dx, i32 dy, i32 dw, i32 dh) {
+        // Default: full present (platforms can override for optimization)
+        present(pixels, w, h);
+    }
 
     // Event processing - processes all pending events and calls callbacks
     // Returns false if window should close

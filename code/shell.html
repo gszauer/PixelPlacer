@@ -332,14 +332,22 @@
         };
 
         // JavaScript functions called from C++
+        // Cached ImageData to avoid allocation every frame
+        let cachedImageData = null;
+        let cachedWidth = 0;
+        let cachedHeight = 0;
+
         window.js_render_frame = function(pixelPtr, width, height) {
-            if (canvas.width !== width || canvas.height !== height) {
+            // Only resize canvas and recreate ImageData when dimensions change
+            if (cachedWidth !== width || cachedHeight !== height) {
                 canvas.width = width;
                 canvas.height = height;
+                cachedImageData = ctx.createImageData(width, height);
+                cachedWidth = width;
+                cachedHeight = height;
             }
 
-            const imageData = ctx.createImageData(width, height);
-            const dst = imageData.data;
+            const dst = cachedImageData.data;
             const pixelCount = width * height;
             const requiredBytes = pixelPtr + pixelCount * 4;
 
@@ -353,17 +361,39 @@
                 return;
             }
 
-            // Framebuffer uses 0xRRGGBBAA which on little-endian is: AA BB GG RR
-            // Canvas ImageData expects: R G B A
-            for (let i = 0; i < pixelCount; i++) {
-                const srcOff = pixelPtr + i * 4;
-                const dstOff = i * 4;
-                dst[dstOff + 0] = HEAPU8[srcOff + 3];  // R <- RR (byte 3)
-                dst[dstOff + 1] = HEAPU8[srcOff + 2];  // G <- GG (byte 2)
-                dst[dstOff + 2] = HEAPU8[srcOff + 1];  // B <- BB (byte 1)
-                dst[dstOff + 3] = HEAPU8[srcOff + 0];  // A <- AA (byte 0)
+            // Direct copy - C++ now stores in canvas RGBA byte order
+            dst.set(HEAPU8.subarray(pixelPtr, pixelPtr + pixelCount * 4));
+            ctx.putImageData(cachedImageData, 0, 0);
+        };
+
+        // Partial frame rendering - only update a dirty region
+        window.js_render_frame_partial = function(pixelPtr, width, height, dx, dy, dw, dh) {
+            // Ensure canvas dimensions match
+            if (cachedWidth !== width || cachedHeight !== height) {
+                // Dimensions changed, fall back to full render
+                js_render_frame(pixelPtr, width, height);
+                return;
             }
-            ctx.putImageData(imageData, 0, 0);
+
+            // Clamp dirty region to canvas bounds
+            if (dx < 0) { dw += dx; dx = 0; }
+            if (dy < 0) { dh += dy; dy = 0; }
+            if (dx + dw > width) dw = width - dx;
+            if (dy + dh > height) dh = height - dy;
+            if (dw <= 0 || dh <= 0) return;
+
+            // Create a smaller ImageData for just the dirty region
+            const partialData = ctx.createImageData(dw, dh);
+            const dst = partialData.data;
+
+            // Copy only the dirty region from the framebuffer
+            for (let y = 0; y < dh; y++) {
+                const srcRowStart = pixelPtr + ((dy + y) * width + dx) * 4;
+                const dstRowStart = y * dw * 4;
+                dst.set(HEAPU8.subarray(srcRowStart, srcRowStart + dw * 4), dstRowStart);
+            }
+
+            ctx.putImageData(partialData, dx, dy);
         };
 
         // Helper functions are called from C++ via EM_ASM directly

@@ -58,7 +58,8 @@ void DocumentViewWidget::renderSelf(Framebuffer& fb) {
         getAppState().needsRedraw = true;
     }
 
-    fb.fillRect(Recti(global), Config::COLOR_BACKGROUND);
+    // Note: Background fill removed - application.cpp already clears framebuffer
+    // Checkerboard will be drawn by compositor for document area
 
     if (view.document) {
         Compositor::compositeDocument(fb, *view.document, view.viewport,
@@ -443,7 +444,35 @@ void DocumentViewWidget::onMouseLeave(const MouseEvent& e) {
 }
 
 void DocumentViewWidget::onDocumentChanged(const Rect& dirtyRect) {
-    getAppState().needsRedraw = true;
+    // If we have a specific dirty rect, convert to screen coordinates and mark dirty
+    if (dirtyRect.w > 0 && dirtyRect.h > 0) {
+        // Convert document rect to screen coordinates
+        Rect screenRect = view.documentToScreen(dirtyRect);
+
+        // Add padding for brush cursor and anti-aliasing
+        const f32 padding = 4.0f;
+        screenRect.x -= padding;
+        screenRect.y -= padding;
+        screenRect.w += padding * 2;
+        screenRect.h += padding * 2;
+
+        // Clip to our widget bounds
+        Rect gb = globalBounds();
+        i32 x0 = std::max(static_cast<i32>(screenRect.x), static_cast<i32>(gb.x));
+        i32 y0 = std::max(static_cast<i32>(screenRect.y), static_cast<i32>(gb.y));
+        i32 x1 = std::min(static_cast<i32>(screenRect.x + screenRect.w), static_cast<i32>(gb.x + gb.w));
+        i32 y1 = std::min(static_cast<i32>(screenRect.y + screenRect.h), static_cast<i32>(gb.y + gb.h));
+
+        if (x1 > x0 && y1 > y0) {
+            markDirty(Recti(x0, y0, x1 - x0, y1 - y0));
+            return;
+        }
+    }
+
+    // Fallback: mark entire canvas area dirty
+    Rect gb = globalBounds();
+    markDirty(Recti(static_cast<i32>(gb.x), static_cast<i32>(gb.y),
+                    static_cast<i32>(gb.w), static_cast<i32>(gb.h)));
 }
 
 // ============================================================================
@@ -2979,6 +3008,34 @@ Dialog* MainWindow::getActiveDialog() {
     if (aboutDialog && aboutDialog->visible) return aboutDialog;
     // Note: popups are non-modal, not included here
     return nullptr;
+}
+
+Recti MainWindow::getSelectionScreenBounds() const {
+    if (!docView || !docView->view.document) {
+        return Recti(0, 0, 0, 0);
+    }
+
+    const Document& doc = *docView->view.document;
+    if (!doc.selection.hasSelection) {
+        return Recti(0, 0, 0, 0);
+    }
+
+    // Convert selection bounds from document to screen coordinates
+    const Recti& selBounds = doc.selection.bounds;
+    Rect docRect(static_cast<f32>(selBounds.x), static_cast<f32>(selBounds.y),
+                 static_cast<f32>(selBounds.w), static_cast<f32>(selBounds.h));
+
+    Rect screenRect = docView->view.documentToScreen(docRect);
+
+    // Add padding for marching ants line thickness
+    i32 padding = std::max(4, static_cast<i32>(Config::uiScale + 0.5f));
+
+    return Recti(
+        static_cast<i32>(screenRect.x) - padding,
+        static_cast<i32>(screenRect.y) - padding,
+        static_cast<i32>(std::ceil(screenRect.w)) + padding * 2,
+        static_cast<i32>(std::ceil(screenRect.h)) + padding * 2
+    );
 }
 
 bool MainWindow::onMouseDown(const MouseEvent& e) {

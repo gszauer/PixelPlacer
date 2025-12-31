@@ -259,14 +259,24 @@ void Application::frame() {
     }
 
     // Force redraw if there's an active selection (for marching ants animation)
+    // Mark only the selection border region as dirty, not the whole screen
     if (state.activeDocument && state.activeDocument->selection.hasSelection) {
-        state.needsRedraw = true;
+        if (!state.needsRedraw) {
+            // Only selection animation - mark selection bounds dirty
+            if (auto* mainWindow = dynamic_cast<MainWindow*>(rootWidget.get())) {
+                Recti selBounds = mainWindow->getSelectionScreenBounds();
+                if (selBounds.w > 0 && selBounds.h > 0) {
+                    markDirty(selBounds);
+                }
+            }
+        }
     }
 
     if (state.needsRedraw) {
         render();
         present();
         state.needsRedraw = false;
+        state.dirtyRegion.clear();
     }
 }
 
@@ -604,20 +614,74 @@ void Application::handleWindowResize(i32 width, i32 height) {
 }
 
 void Application::render() {
-    // Clear to background color
+#ifdef __EMSCRIPTEN__
+    // WASM: Use dirty region tracking for partial redraws
+    // This is a big win because JS canvas updates are expensive
+    AppState& state = getAppState();
+
+    if (state.dirtyRegion.fullRedraw || state.dirtyRegion.rects.empty()) {
+        // Full redraw - clear entire framebuffer and render everything
+        framebuffer.clear(Config::COLOR_BACKGROUND);
+
+        if (rootWidget) {
+            rootWidget->render(framebuffer);
+        }
+
+        OverlayManager::instance().renderOverlays(framebuffer);
+    } else {
+        // Partial redraw - only update dirty regions
+        // Use clipping to restrict rendering to dirty areas
+        for (const auto& dirtyRect : state.dirtyRegion.rects) {
+            // Clear only the dirty region
+            framebuffer.clearRect(dirtyRect, Config::COLOR_BACKGROUND);
+
+            // Push clip to restrict rendering
+            framebuffer.pushClip(dirtyRect);
+
+            // Render widget tree (clipping will limit what's drawn)
+            if (rootWidget) {
+                rootWidget->render(framebuffer);
+            }
+
+            // Render overlays
+            OverlayManager::instance().renderOverlays(framebuffer);
+
+            framebuffer.popClip();
+        }
+    }
+#else
+    // Native: Always do full redraws - X11 blitting is fast and
+    // the overhead of dirty region tracking isn't worth it
     framebuffer.clear(Config::COLOR_BACKGROUND);
 
-    // Render widget tree
     if (rootWidget) {
         rootWidget->render(framebuffer);
     }
 
-    // Render overlays on top (popups, dropdowns, dialogs)
     OverlayManager::instance().renderOverlays(framebuffer);
+#endif
 }
 
 void Application::present() {
+    AppState& state = getAppState();
+
+#ifdef __EMSCRIPTEN__
+    // WASM: Check if we can do a partial update
+    if (!state.dirtyRegion.fullRedraw && !state.dirtyRegion.rects.empty()) {
+        // Partial update - send only the dirty bounds
+        Recti bounds = state.dirtyRegion.bounds();
+        window->presentPartial(
+            reinterpret_cast<const u32*>(framebuffer.data()),
+            framebuffer.width, framebuffer.height,
+            bounds.x, bounds.y, bounds.w, bounds.h);
+    } else {
+        // Full update
+        window->present(reinterpret_cast<const u32*>(framebuffer.data()),
+                        framebuffer.width, framebuffer.height);
+    }
+#else
     window->present(framebuffer.data(), framebuffer.width, framebuffer.height);
+#endif
 }
 
 void Application::setTitle(const std::string& title) {

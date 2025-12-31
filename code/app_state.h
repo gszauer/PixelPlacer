@@ -16,6 +16,49 @@ class Document;
 class DocumentView;
 class Tool;
 
+// Dirty region tracking for optimized rendering
+struct DirtyRegion {
+    std::vector<Recti> rects;
+    bool fullRedraw = true;  // Start with full redraw
+
+    void markDirty(const Recti& r) {
+        if (fullRedraw) return;  // Already doing full redraw
+        if (r.w <= 0 || r.h <= 0) return;
+
+        // Merge with existing rects if overlapping, or add new
+        // Simple approach: just add to list (could optimize with merging)
+        rects.push_back(r);
+
+        // If we have too many small rects, just do full redraw
+        if (rects.size() > 16) {
+            markFullRedraw();
+        }
+    }
+
+    void markFullRedraw() {
+        fullRedraw = true;
+        rects.clear();
+    }
+
+    void clear() {
+        fullRedraw = false;
+        rects.clear();
+    }
+
+    Recti bounds() const {
+        if (rects.empty()) return Recti(0, 0, 0, 0);
+        i32 x0 = rects[0].x, y0 = rects[0].y;
+        i32 x1 = x0 + rects[0].w, y1 = y0 + rects[0].h;
+        for (size_t i = 1; i < rects.size(); ++i) {
+            x0 = std::min(x0, rects[i].x);
+            y0 = std::min(y0, rects[i].y);
+            x1 = std::max(x1, rects[i].x + rects[i].w);
+            y1 = std::max(y1, rects[i].y + rects[i].h);
+        }
+        return Recti(x0, y0, x1 - x0, y1 - y0);
+    }
+};
+
 // Clipboard data for copy/paste
 struct Clipboard {
     std::unique_ptr<TiledCanvas> pixels;
@@ -123,6 +166,9 @@ struct AppState {
     bool running = true;
     bool needsRedraw = true;
 
+    // Dirty region tracking for partial redraws
+    DirtyRegion dirtyRegion;
+
     // Mouse state
     Vec2 mousePosition;
     bool mouseDown = false;
@@ -171,6 +217,20 @@ struct AppState {
 
 // Global state accessor
 AppState& getAppState();
+
+// Helper to request redraw - marks full redraw and sets needsRedraw flag
+inline void requestRedraw() {
+    AppState& state = getAppState();
+    state.needsRedraw = true;
+    state.dirtyRegion.markFullRedraw();
+}
+
+// Helper to mark a specific region dirty - for partial updates
+inline void markDirty(const Recti& rect) {
+    AppState& state = getAppState();
+    state.needsRedraw = true;
+    state.dirtyRegion.markDirty(rect);
+}
 
 // Evaluate cubic bezier pressure curve
 // Input: raw pressure (0-1), control points
