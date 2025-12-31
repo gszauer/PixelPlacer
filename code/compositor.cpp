@@ -8,6 +8,31 @@
 
 namespace Compositor {
 
+// Pre-computed layer data to avoid per-pixel virtual calls and matrix inversions
+struct LayerRenderData {
+    enum class Type { Pixel, Text, Adjustment };
+    Type type;
+    BlendMode blend;
+    f32 opacity;
+
+    // Transform data (pre-computed)
+    bool hasTransform;
+    Matrix3x2 invMatrix;
+    Vec2 position;  // For position-only layers
+
+    // Type-specific pointers
+    const TiledCanvas* canvas = nullptr;         // For pixel layers
+    TiledCanvas* textCache = nullptr;            // For text layers (non-const for ensureCacheValid)
+    const AdjustmentLayer* adjustment = nullptr; // For adjustment layers
+    u32 canvasWidth = 0;
+    u32 canvasHeight = 0;
+
+    // Stroke overlay (only for the layer being painted)
+    TiledCanvas* strokeBuffer = nullptr;
+    f32 strokeOpacity = 1.0f;
+    bool isEraserStroke = false;
+};
+
 void compositeLayer(TiledCanvas& dst, const TiledCanvas& src, BlendMode mode, f32 opacity) {
     if (opacity <= 0.0f) return;
 
@@ -76,6 +101,77 @@ void compositeDocument(Framebuffer& fb, const Document& doc,
     i32 renderX1 = std::min(static_cast<i32>(viewport.x + viewport.w), docScreenX1);
     i32 renderY1 = std::min(static_cast<i32>(viewport.y + viewport.h), docScreenY1);
 
+    // Pre-compute layer render data to avoid per-pixel virtual calls and matrix inversions
+    std::vector<LayerRenderData> layerCache;
+    layerCache.reserve(doc.layers.size());
+
+    for (const auto& layer : doc.layers) {
+        if (!layer->visible) continue;
+
+        LayerRenderData data;
+        data.blend = layer->blend;
+        data.opacity = layer->opacity;
+        data.position = layer->transform.position;
+
+        if (layer->isPixelLayer()) {
+            data.type = LayerRenderData::Type::Pixel;
+            const PixelLayer* pixelLayer = static_cast<const PixelLayer*>(layer.get());
+            data.canvas = &pixelLayer->canvas;
+            data.canvasWidth = pixelLayer->canvas.width;
+            data.canvasHeight = pixelLayer->canvas.height;
+
+            // Pre-compute transform
+            data.hasTransform = layer->transform.rotation != 0.0f ||
+                                layer->transform.scale.x != 1.0f ||
+                                layer->transform.scale.y != 1.0f;
+
+            if (data.hasTransform) {
+                Matrix3x2 mat = layer->transform.toMatrix(data.canvasWidth, data.canvasHeight);
+                data.invMatrix = mat.inverted();
+            }
+
+            // Check if this layer has an active stroke buffer
+            if (strokeBuffer && strokeLayer == pixelLayer) {
+                data.strokeBuffer = strokeBuffer;
+                data.strokeOpacity = strokeOpacity;
+                data.isEraserStroke = isEraserStroke;
+            }
+        }
+        else if (layer->isTextLayer()) {
+            data.type = LayerRenderData::Type::Text;
+            TextLayer* textLayer = const_cast<TextLayer*>(static_cast<const TextLayer*>(layer.get()));
+            textLayer->ensureCacheValid();
+            data.textCache = &textLayer->rasterizedCache;
+            data.canvasWidth = textLayer->rasterizedCache.width;
+            data.canvasHeight = textLayer->rasterizedCache.height;
+
+            // Pre-compute transform
+            data.hasTransform = layer->transform.rotation != 0.0f ||
+                                layer->transform.scale.x != 1.0f ||
+                                layer->transform.scale.y != 1.0f;
+
+            if (data.hasTransform) {
+                Matrix3x2 mat = layer->transform.toMatrix(data.canvasWidth, data.canvasHeight);
+                data.invMatrix = mat.inverted();
+            }
+        }
+        else if (layer->isAdjustmentLayer()) {
+            data.type = LayerRenderData::Type::Adjustment;
+            data.adjustment = static_cast<const AdjustmentLayer*>(layer.get());
+            data.hasTransform = false;
+        }
+
+        layerCache.push_back(data);
+    }
+
+    // Pre-compute floating content offset if active
+    const bool hasFloating = doc.floatingContent.active && doc.floatingContent.pixels;
+    f32 floatOffsetX = 0, floatOffsetY = 0;
+    if (hasFloating) {
+        floatOffsetX = doc.floatingContent.originalBounds.x + doc.floatingContent.currentOffset.x;
+        floatOffsetY = doc.floatingContent.originalBounds.y + doc.floatingContent.currentOffset.y;
+    }
+
     // Only render within document bounds (clipped to viewport)
     for (i32 screenY = renderY0; screenY < renderY1; ++screenY) {
         f32 docY = (screenY - viewport.y - pan.y) / zoom;
@@ -83,131 +179,79 @@ void compositeDocument(Framebuffer& fb, const Document& doc,
         for (i32 screenX = renderX0; screenX < renderX1; ++screenX) {
             f32 docX = (screenX - viewport.x - pan.x) / zoom;
 
-            // Composite all layers at this pixel
-            u32 composited = 0; // Start with transparent
+            // Composite all layers at this pixel using cached data
+            u32 composited = 0;
 
-            for (const auto& layer : doc.layers) {
-                if (!layer->visible) continue;
+            for (const auto& data : layerCache) {
+                if (data.type == LayerRenderData::Type::Adjustment) {
+                    composited = applyAdjustment(composited, *data.adjustment);
+                    continue;
+                }
 
                 u32 layerPixel = 0;
+                f32 layerX, layerY;
+                SampleMode actualMode = sampleMode;
 
-                if (layer->isPixelLayer()) {
-                    const PixelLayer* pixelLayer = static_cast<const PixelLayer*>(layer.get());
+                if (data.hasTransform) {
+                    Vec2 srcCoord = data.invMatrix.transform(Vec2(docX, docY));
+                    layerX = srcCoord.x;
+                    layerY = srcCoord.y;
+                    actualMode = SampleMode::Bilinear;
+                } else {
+                    layerX = docX - data.position.x;
+                    layerY = docY - data.position.y;
+                }
 
-                    // Check if layer has rotation or scale (not just position)
-                    bool hasTransform = layer->transform.rotation != 0.0f ||
-                                        layer->transform.scale.x != 1.0f ||
-                                        layer->transform.scale.y != 1.0f;
-
-                    f32 layerX, layerY;
-                    SampleMode actualMode = sampleMode;
-
-                    if (hasTransform) {
-                        // Apply full transform using inverse matrix
-                        Matrix3x2 mat = layer->transform.toMatrix(
-                            pixelLayer->canvas.width, pixelLayer->canvas.height);
-                        Matrix3x2 invMat = mat.inverted();
-                        Vec2 srcCoord = invMat.transform(Vec2(docX, docY));
-                        layerX = srcCoord.x;
-                        layerY = srcCoord.y;
-                        // Always use bilinear for rotated/scaled content
-                        actualMode = SampleMode::Bilinear;
-                    } else {
-                        // Position-only offset
-                        layerX = docX - layer->transform.position.x;
-                        layerY = docY - layer->transform.position.y;
-                    }
-
+                if (data.type == LayerRenderData::Type::Pixel) {
                     if (actualMode == SampleMode::Nearest) {
                         i32 ix = static_cast<i32>(std::floor(layerX));
                         i32 iy = static_cast<i32>(std::floor(layerY));
-                        // TiledCanvas handles any coordinates - returns 0 for non-existent tiles
-                        layerPixel = pixelLayer->canvas.getPixel(ix, iy);
+                        layerPixel = data.canvas->getPixel(ix, iy);
                     } else {
-                        layerPixel = Sampler::sample(pixelLayer->canvas, layerX, layerY, actualMode);
+                        layerPixel = Sampler::sample(*data.canvas, layerX, layerY, actualMode);
                     }
 
-                    // Composite stroke buffer preview if this is the layer being painted on
-                    if (strokeBuffer && strokeLayer == pixelLayer) {
+                    // Composite stroke buffer preview if this layer has one
+                    if (data.strokeBuffer) {
                         i32 ix = static_cast<i32>(std::floor(layerX));
                         i32 iy = static_cast<i32>(std::floor(layerY));
-                        u32 strokePixel = strokeBuffer->getPixel(ix, iy);
+                        u32 strokePixel = data.strokeBuffer->getPixel(ix, iy);
                         if ((strokePixel & 0xFF) > 0) {
-                            if (isEraserStroke) {
-                                // Eraser preview: reduce alpha based on erase amount in buffer
-                                // Buffer stores erase intensity as alpha of white pixel
+                            if (data.isEraserStroke) {
                                 u8 eraseAmount = strokePixel & 0xFF;
-                                f32 eraseFactor = (eraseAmount / 255.0f) * strokeOpacity;
-
+                                f32 eraseFactor = (eraseAmount / 255.0f) * data.strokeOpacity;
                                 u8 r, g, b, a;
                                 Blend::unpack(layerPixel, r, g, b, a);
                                 a = static_cast<u8>(a * (1.0f - eraseFactor));
                                 layerPixel = Blend::pack(r, g, b, a);
                             } else {
-                                // Brush preview: blend stroke color onto layer pixel with stroke opacity
-                                layerPixel = Blend::blend(layerPixel, strokePixel, BlendMode::Normal, strokeOpacity);
+                                layerPixel = Blend::blend(layerPixel, strokePixel, BlendMode::Normal, data.strokeOpacity);
                             }
                         }
                     }
                 }
-                else if (layer->isTextLayer()) {
-                    TextLayer* textLayer = const_cast<TextLayer*>(static_cast<const TextLayer*>(layer.get()));
-                    textLayer->ensureCacheValid();
-
-                    // Apply full layer transform using matrix
-                    f32 layerX, layerY;
-                    bool needsBilinear = !layer->transform.isIdentity() &&
-                                         (layer->transform.scale.x != 1.0f ||
-                                          layer->transform.scale.y != 1.0f ||
-                                          layer->transform.rotation != 0.0f);
-
-                    if (layer->transform.isIdentity()) {
-                        layerX = docX;
-                        layerY = docY;
-                    } else if (layer->transform.rotation == 0.0f &&
-                               layer->transform.scale.x == 1.0f &&
-                               layer->transform.scale.y == 1.0f) {
-                        layerX = docX - layer->transform.position.x;
-                        layerY = docY - layer->transform.position.y;
-                    } else {
-                        Matrix3x2 mat = layer->transform.toMatrix(
-                            textLayer->rasterizedCache.width, textLayer->rasterizedCache.height);
-                        Matrix3x2 invMat = mat.inverted();
-                        Vec2 layerCoord = invMat.transform(Vec2(docX, docY));
-                        layerX = layerCoord.x;
-                        layerY = layerCoord.y;
-                    }
-
-                    SampleMode actualMode = needsBilinear ? SampleMode::Bilinear : sampleMode;
-
+                else if (data.type == LayerRenderData::Type::Text) {
                     if (actualMode == SampleMode::Nearest) {
                         i32 ix = static_cast<i32>(layerX);
                         i32 iy = static_cast<i32>(layerY);
-                        if (ix >= 0 && iy >= 0 && ix < static_cast<i32>(textLayer->rasterizedCache.width) &&
-                            iy < static_cast<i32>(textLayer->rasterizedCache.height)) {
-                            layerPixel = textLayer->rasterizedCache.getPixel(ix, iy);
+                        if (ix >= 0 && iy >= 0 && ix < static_cast<i32>(data.canvasWidth) &&
+                            iy < static_cast<i32>(data.canvasHeight)) {
+                            layerPixel = data.textCache->getPixel(ix, iy);
                         }
                     } else {
-                        layerPixel = Sampler::sample(textLayer->rasterizedCache, layerX, layerY, actualMode);
+                        layerPixel = Sampler::sample(*data.textCache, layerX, layerY, actualMode);
                     }
-                }
-                else if (layer->isAdjustmentLayer()) {
-                    // Apply adjustment to composited result so far
-                    const AdjustmentLayer* adj = static_cast<const AdjustmentLayer*>(layer.get());
-                    composited = applyAdjustment(composited, *adj);
-                    continue;
                 }
 
                 if ((layerPixel & 0xFF) > 0) {
-                    composited = Blend::blend(composited, layerPixel, layer->blend, layer->opacity);
+                    composited = Blend::blend(composited, layerPixel, data.blend, data.opacity);
                 }
             }
 
             // Composite floating content (selection being moved)
-            if (doc.floatingContent.active && doc.floatingContent.pixels) {
-                // Calculate position in floating content space
-                f32 floatX = docX - doc.floatingContent.originalBounds.x - doc.floatingContent.currentOffset.x;
-                f32 floatY = docY - doc.floatingContent.originalBounds.y - doc.floatingContent.currentOffset.y;
+            if (hasFloating) {
+                f32 floatX = docX - floatOffsetX;
+                f32 floatY = docY - floatOffsetY;
 
                 i32 ix = static_cast<i32>(std::floor(floatX));
                 i32 iy = static_cast<i32>(std::floor(floatY));

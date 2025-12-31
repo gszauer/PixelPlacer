@@ -214,6 +214,11 @@ void Application::updateDPIScale() {
 void Application::frame() {
     if (!initialized) return;
 
+#ifdef __EMSCRIPTEN__
+    // Update cached time once per frame to avoid JS boundary crossings
+    Platform::updateFrameTime();
+#endif
+
     AppState& state = getAppState();
 
     window->processEvents();

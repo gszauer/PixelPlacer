@@ -12,6 +12,55 @@
 struct stbtt_fontinfo;
 class TiledCanvas;
 
+// Cached glyph information in the atlas
+struct GlyphInfo {
+    u16 atlasX, atlasY;   // Position in atlas
+    u16 width, height;    // Glyph dimensions
+    i16 bearingX, bearingY; // Glyph bearings (offset from cursor)
+    f32 advance;          // Horizontal advance
+    bool valid = false;
+};
+
+// Glyph atlas for caching rasterized glyphs
+class GlyphAtlas {
+public:
+    static constexpr u32 ATLAS_SIZE = 2048;  // 2048x2048 grayscale atlas
+    static constexpr u32 PADDING = 1;        // Padding between glyphs
+
+    GlyphAtlas();
+
+    // Get or create a glyph in the atlas
+    // Returns nullptr if glyph couldn't be added (shouldn't happen normally)
+    const GlyphInfo* getGlyph(u32 codepoint, f32 fontSize, i32 fontIndex, stbtt_fontinfo* font);
+
+    // Render a cached glyph to framebuffer
+    void renderGlyph(Framebuffer& fb, const GlyphInfo& glyph, i32 x, i32 y, u32 color) const;
+
+    // Clear the atlas (called when full)
+    void clear();
+
+private:
+    std::vector<u8> pixels;  // Grayscale atlas texture
+    std::unordered_map<u64, GlyphInfo> glyphs;
+
+    // Row-based packing state
+    u32 currentX = 0;
+    u32 currentY = 0;
+    u32 rowHeight = 0;
+
+    // Create a unique key for glyph lookup
+    static u64 makeKey(u32 codepoint, u16 quantizedSize, i32 fontIndex) {
+        return (static_cast<u64>(fontIndex) << 48) |
+               (static_cast<u64>(quantizedSize) << 32) |
+               static_cast<u64>(codepoint);
+    }
+
+    // Quantize font size to reduce atlas entries (round to nearest 0.5)
+    static u16 quantizeSize(f32 size) {
+        return static_cast<u16>(size * 2.0f + 0.5f);
+    }
+};
+
 // Simple font renderer (using stb_truetype)
 class FontRenderer {
 public:
@@ -59,6 +108,12 @@ private:
         std::unique_ptr<stbtt_fontinfo> info;
     };
     std::unordered_map<std::string, LoadedFont> customFonts;
+
+    // Glyph atlas for caching rasterized glyphs
+    GlyphAtlas glyphAtlas;
+
+    // Font index for atlas (0 = default, 1+ = custom fonts)
+    i32 getFontIndex(const std::string& fontName) const;
 };
 
 // Label widget

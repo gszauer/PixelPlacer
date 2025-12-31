@@ -143,12 +143,21 @@ void launchBrowser(const char* url) {
     }, url);
 }
 
+// Cached time value - updated once per frame to avoid JS boundary crossings
+static f64 cachedTimeMs = 0.0;
+
+void updateFrameTime() {
+    cachedTimeMs = EM_ASM_DOUBLE({ return performance.now(); });
+}
+
 u64 getMilliseconds() {
-    return static_cast<u64>(EM_ASM_DOUBLE({ return performance.now(); }));
+    // Return cached value (updated once per frame by Application::frame())
+    return static_cast<u64>(cachedTimeMs);
 }
 
 u64 getMicroseconds() {
-    return static_cast<u64>(EM_ASM_DOUBLE({ return performance.now() * 1000.0; }));
+    // Return cached value in microseconds
+    return static_cast<u64>(cachedTimeMs * 1000.0);
 }
 
 std::string getClipboardText() {

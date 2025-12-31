@@ -15,6 +15,133 @@ FontRenderer& FontRenderer::instance() {
     return instance;
 }
 
+// GlyphAtlas implementation
+GlyphAtlas::GlyphAtlas() {
+    pixels.resize(ATLAS_SIZE * ATLAS_SIZE, 0);
+}
+
+const GlyphInfo* GlyphAtlas::getGlyph(u32 codepoint, f32 fontSize, i32 fontIndex, stbtt_fontinfo* font) {
+    if (!font) return nullptr;
+
+    u16 quantized = quantizeSize(fontSize);
+    u64 key = makeKey(codepoint, quantized, fontIndex);
+
+    // Check cache first
+    auto it = glyphs.find(key);
+    if (it != glyphs.end()) {
+        return &it->second;
+    }
+
+    // Need to rasterize this glyph
+    f32 scale = stbtt_ScaleForPixelHeight(font, fontSize);
+
+    i32 x0, y0, x1, y1;
+    stbtt_GetCodepointBitmapBox(font, codepoint, scale, scale, &x0, &y0, &x1, &y1);
+
+    i32 glyphW = x1 - x0;
+    i32 glyphH = y1 - y0;
+
+    // Handle empty glyphs (spaces, etc.)
+    if (glyphW <= 0 || glyphH <= 0) {
+        GlyphInfo info;
+        info.atlasX = 0;
+        info.atlasY = 0;
+        info.width = 0;
+        info.height = 0;
+        info.bearingX = static_cast<i16>(x0);
+        info.bearingY = static_cast<i16>(y0);
+
+        i32 advance, lsb;
+        stbtt_GetCodepointHMetrics(font, codepoint, &advance, &lsb);
+        info.advance = advance * scale;
+        info.valid = true;
+
+        glyphs[key] = info;
+        return &glyphs[key];
+    }
+
+    // Check if we need to wrap to next row
+    if (currentX + glyphW + PADDING > ATLAS_SIZE) {
+        currentX = 0;
+        currentY += rowHeight + PADDING;
+        rowHeight = 0;
+    }
+
+    // Check if we need to clear the atlas (out of space)
+    if (currentY + glyphH + PADDING > ATLAS_SIZE) {
+        clear();
+    }
+
+    // Rasterize directly into the atlas
+    u8* dest = pixels.data() + currentY * ATLAS_SIZE + currentX;
+    stbtt_MakeCodepointBitmap(font, dest, glyphW, glyphH, ATLAS_SIZE, scale, scale, codepoint);
+
+    // Create glyph info
+    GlyphInfo info;
+    info.atlasX = static_cast<u16>(currentX);
+    info.atlasY = static_cast<u16>(currentY);
+    info.width = static_cast<u16>(glyphW);
+    info.height = static_cast<u16>(glyphH);
+    info.bearingX = static_cast<i16>(x0);
+    info.bearingY = static_cast<i16>(y0);
+
+    i32 advance, lsb;
+    stbtt_GetCodepointHMetrics(font, codepoint, &advance, &lsb);
+    info.advance = advance * scale;
+    info.valid = true;
+
+    // Update packing state
+    currentX += glyphW + PADDING;
+    rowHeight = std::max(rowHeight, static_cast<u32>(glyphH));
+
+    glyphs[key] = info;
+    return &glyphs[key];
+}
+
+void GlyphAtlas::renderGlyph(Framebuffer& fb, const GlyphInfo& glyph, i32 x, i32 y, u32 color) const {
+    if (!glyph.valid || glyph.width == 0 || glyph.height == 0) return;
+
+    u8 cr, cg, cb, ca;
+    Blend::unpack(color, cr, cg, cb, ca);
+
+    for (u32 gy = 0; gy < glyph.height; ++gy) {
+        for (u32 gx = 0; gx < glyph.width; ++gx) {
+            u8 alpha = pixels[(glyph.atlasY + gy) * ATLAS_SIZE + glyph.atlasX + gx];
+            if (alpha > 0) {
+                u32 pixelColor = Blend::pack(cr, cg, cb, static_cast<u8>((alpha * ca) / 255));
+                fb.blendPixel(x + gx, y + gy, pixelColor);
+            }
+        }
+    }
+}
+
+void GlyphAtlas::clear() {
+    glyphs.clear();
+    std::fill(pixels.begin(), pixels.end(), 0);
+    currentX = 0;
+    currentY = 0;
+    rowHeight = 0;
+}
+
+// FontRenderer::getFontIndex - returns a stable index for a font name
+i32 FontRenderer::getFontIndex(const std::string& fontName) const {
+    if (fontName.empty() || fontName == "Internal Font") {
+        return 0;  // Default font
+    }
+
+    // Find index in custom fonts (1-based to avoid collision with default)
+    i32 index = 1;
+    for (const auto& [name, font] : customFonts) {
+        if (name == fontName) {
+            return index;
+        }
+        ++index;
+    }
+
+    // Font not found, fallback to default
+    return 0;
+}
+
 void FontRenderer::loadFont(const u8* data, i32 size) {
     fontData.assign(data, data + size);
     fontInfo = std::make_unique<stbtt_fontinfo>();
@@ -85,41 +212,23 @@ void FontRenderer::renderText(Framebuffer& fb, const std::string& text, i32 x, i
 
     f32 xpos = static_cast<f32>(x);
 
-    u8 cr, cg, cb, ca;
-    Blend::unpack(color, cr, cg, cb, ca);
-
     for (size_t i = 0; i < text.size(); ++i) {
         i32 c = static_cast<u8>(text[i]);
         if (c < 32) continue;
 
-        i32 advance, lsb;
-        stbtt_GetCodepointHMetrics(fontInfo.get(), c, &advance, &lsb);
-
-        i32 x0, y0, x1, y1;
-        stbtt_GetCodepointBitmapBox(fontInfo.get(), c, scale, scale, &x0, &y0, &x1, &y1);
-
-        i32 bw = x1 - x0;
-        i32 bh = y1 - y0;
-
-        if (bw > 0 && bh > 0) {
-            std::vector<u8> bitmap(bw * bh);
-            stbtt_MakeCodepointBitmap(fontInfo.get(), bitmap.data(), bw, bh, bw, scale, scale, c);
-
-            i32 gx = static_cast<i32>(xpos) + x0;
-            i32 gy = y + ascent + y0;
-
-            for (i32 by = 0; by < bh; ++by) {
-                for (i32 bx = 0; bx < bw; ++bx) {
-                    u8 alpha = bitmap[by * bw + bx];
-                    if (alpha > 0) {
-                        u32 pixelColor = Blend::pack(cr, cg, cb, static_cast<u8>((alpha * ca) / 255));
-                        fb.blendPixel(gx + bx, gy + by, pixelColor);
-                    }
-                }
-            }
+        // Get glyph from atlas (will rasterize if not cached)
+        const GlyphInfo* glyph = glyphAtlas.getGlyph(c, size, 0, fontInfo.get());
+        if (glyph && glyph->valid) {
+            i32 gx = static_cast<i32>(xpos) + glyph->bearingX;
+            i32 gy = y + ascent + glyph->bearingY;
+            glyphAtlas.renderGlyph(fb, *glyph, gx, gy, color);
+            xpos += glyph->advance;
+        } else {
+            // Fallback for missing glyph
+            i32 advance, lsb;
+            stbtt_GetCodepointHMetrics(fontInfo.get(), c, &advance, &lsb);
+            xpos += advance * scale;
         }
-
-        xpos += advance * scale;
 
         if (i + 1 < text.size()) {
             i32 kern = stbtt_GetCodepointKernAdvance(fontInfo.get(), c, static_cast<u8>(text[i + 1]));
@@ -133,15 +242,13 @@ void FontRenderer::renderTextWithFont(Framebuffer& fb, const std::string& text, 
     if (!font || text.empty()) return;
 
     f32 scale = stbtt_ScaleForPixelHeight(font, size);
+    i32 fontIdx = getFontIndex(fontName);
 
     i32 ascent, descent, lineGap;
     stbtt_GetFontVMetrics(font, &ascent, &descent, &lineGap);
     ascent = static_cast<i32>(ascent * scale);
 
     f32 xpos = static_cast<f32>(x);
-
-    u8 cr, cg, cb, ca;
-    Blend::unpack(color, cr, cg, cb, ca);
 
     // For icon fonts, we need to handle Unicode codepoints
     size_t i = 0;
@@ -166,34 +273,19 @@ void FontRenderer::renderTextWithFont(Framebuffer& fb, const std::string& text, 
             continue;
         }
 
-        i32 advance, lsb;
-        stbtt_GetCodepointHMetrics(font, c, &advance, &lsb);
-
-        i32 x0, y0, x1, y1;
-        stbtt_GetCodepointBitmapBox(font, c, scale, scale, &x0, &y0, &x1, &y1);
-
-        i32 bw = x1 - x0;
-        i32 bh = y1 - y0;
-
-        if (bw > 0 && bh > 0) {
-            std::vector<u8> bitmap(bw * bh);
-            stbtt_MakeCodepointBitmap(font, bitmap.data(), bw, bh, bw, scale, scale, c);
-
-            i32 gx = static_cast<i32>(xpos) + x0;
-            i32 gy = y + ascent + y0;
-
-            for (i32 by = 0; by < bh; ++by) {
-                for (i32 bx = 0; bx < bw; ++bx) {
-                    u8 alpha = bitmap[by * bw + bx];
-                    if (alpha > 0) {
-                        u32 pixelColor = Blend::pack(cr, cg, cb, static_cast<u8>((alpha * ca) / 255));
-                        fb.blendPixel(gx + bx, gy + by, pixelColor);
-                    }
-                }
-            }
+        // Get glyph from atlas (will rasterize if not cached)
+        const GlyphInfo* glyph = glyphAtlas.getGlyph(c, size, fontIdx, font);
+        if (glyph && glyph->valid) {
+            i32 gx = static_cast<i32>(xpos) + glyph->bearingX;
+            i32 gy = y + ascent + glyph->bearingY;
+            glyphAtlas.renderGlyph(fb, *glyph, gx, gy, color);
+            xpos += glyph->advance;
+        } else {
+            // Fallback for missing glyph
+            i32 advance, lsb;
+            stbtt_GetCodepointHMetrics(font, c, &advance, &lsb);
+            xpos += advance * scale;
         }
-
-        xpos += advance * scale;
     }
 }
 
@@ -234,40 +326,17 @@ void FontRenderer::renderTextVertical(Framebuffer& fb, const std::string& text, 
     f32 lineHeight = size * 0.9f;  // Tighter vertical spacing for stacked chars
     f32 ypos = static_cast<f32>(y);
 
-    u8 cr, cg, cb, ca;
-    Blend::unpack(color, cr, cg, cb, ca);
-
     for (size_t i = 0; i < text.size(); ++i) {
         i32 c = static_cast<u8>(text[i]);
         if (c < 32) continue;
 
-        i32 advance, lsb;
-        stbtt_GetCodepointHMetrics(fontInfo.get(), c, &advance, &lsb);
-
-        i32 x0, y0, x1, y1;
-        stbtt_GetCodepointBitmapBox(fontInfo.get(), c, scale, scale, &x0, &y0, &x1, &y1);
-
-        i32 bw = x1 - x0;
-        i32 bh = y1 - y0;
-
-        if (bw > 0 && bh > 0) {
-            std::vector<u8> bitmap(bw * bh);
-            stbtt_MakeCodepointBitmap(fontInfo.get(), bitmap.data(), bw, bh, bw, scale, scale, c);
-
+        // Get glyph from atlas (will rasterize if not cached)
+        const GlyphInfo* glyph = glyphAtlas.getGlyph(c, size, 0, fontInfo.get());
+        if (glyph && glyph->valid) {
             // Center each character horizontally around x
-            f32 charWidth = advance * scale;
-            i32 gx = x + x0 - static_cast<i32>(charWidth / 4);  // Rough centering
-            i32 gy = static_cast<i32>(ypos) + ascent + y0;
-
-            for (i32 by = 0; by < bh; ++by) {
-                for (i32 bx = 0; bx < bw; ++bx) {
-                    u8 alpha = bitmap[by * bw + bx];
-                    if (alpha > 0) {
-                        u32 pixelColor = Blend::pack(cr, cg, cb, static_cast<u8>((alpha * ca) / 255));
-                        fb.blendPixel(gx + bx, gy + by, pixelColor);
-                    }
-                }
-            }
+            i32 gx = x + glyph->bearingX - static_cast<i32>(glyph->advance / 4);  // Rough centering
+            i32 gy = static_cast<i32>(ypos) + ascent + glyph->bearingY;
+            glyphAtlas.renderGlyph(fb, *glyph, gx, gy, color);
         }
 
         ypos += lineHeight;
@@ -500,37 +569,17 @@ void FontRenderer::renderIconCentered(Framebuffer& fb, const std::string& icon, 
     }
     if (codepoint == 0) return;
 
-    f32 scale = stbtt_ScaleForPixelHeight(font, size);
-
-    // Get the actual glyph bounding box
-    i32 x0, y0, x1, y1;
-    stbtt_GetCodepointBitmapBox(font, codepoint, scale, scale, &x0, &y0, &x1, &y1);
-
-    i32 glyphW = x1 - x0;
-    i32 glyphH = y1 - y0;
-    if (glyphW <= 0 || glyphH <= 0) return;
-
-    // Render the glyph bitmap
-    std::vector<u8> bitmap(glyphW * glyphH);
-    stbtt_MakeCodepointBitmap(font, bitmap.data(), glyphW, glyphH, glyphW, scale, scale, codepoint);
+    // Get glyph from atlas (will rasterize if not cached)
+    i32 fontIdx = getFontIndex(fontName);
+    const GlyphInfo* glyph = glyphAtlas.getGlyph(codepoint, size, fontIdx, font);
+    if (!glyph || !glyph->valid || glyph->width == 0 || glyph->height == 0) return;
 
     // Center the glyph visually within bounds
-    // The bitmap represents the actual visible pixels of the glyph
-    i32 drawX = static_cast<i32>(bounds.x + (bounds.w - glyphW) / 2);
-    i32 drawY = static_cast<i32>(bounds.y + (bounds.h - glyphH) / 2);
+    // Use the actual glyph dimensions for centering
+    i32 drawX = static_cast<i32>(bounds.x + (bounds.w - glyph->width) / 2);
+    i32 drawY = static_cast<i32>(bounds.y + (bounds.h - glyph->height) / 2);
 
-    u8 cr, cg, cb, ca;
-    Blend::unpack(color, cr, cg, cb, ca);
-
-    for (i32 by = 0; by < glyphH; ++by) {
-        for (i32 bx = 0; bx < glyphW; ++bx) {
-            u8 alpha = bitmap[by * glyphW + bx];
-            if (alpha > 0) {
-                u32 pixelColor = Blend::pack(cr, cg, cb, static_cast<u8>((alpha * ca) / 255));
-                fb.blendPixel(drawX + bx, drawY + by, pixelColor);
-            }
-        }
-    }
+    glyphAtlas.renderGlyph(fb, *glyph, drawX, drawY, color);
 }
 
 // Label implementation

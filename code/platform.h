@@ -27,6 +27,9 @@ namespace Platform {
     // Time
     u64 getMilliseconds();
     u64 getMicroseconds();
+#ifdef __EMSCRIPTEN__
+    void updateFrameTime();  // Call once per frame to cache time value
+#endif
 
     // Clipboard
     std::string getClipboardText();

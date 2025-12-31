@@ -366,6 +366,11 @@
             ctx.putImageData(cachedImageData, 0, 0);
         };
 
+        // Cached partial ImageData to avoid allocation every partial update
+        let partialImageData = null;
+        let partialCachedWidth = 0;
+        let partialCachedHeight = 0;
+
         // Partial frame rendering - only update a dirty region
         window.js_render_frame_partial = function(pixelPtr, width, height, dx, dy, dw, dh) {
             // Ensure canvas dimensions match
@@ -382,9 +387,13 @@
             if (dy + dh > height) dh = height - dy;
             if (dw <= 0 || dh <= 0) return;
 
-            // Create a smaller ImageData for just the dirty region
-            const partialData = ctx.createImageData(dw, dh);
-            const dst = partialData.data;
+            // Reuse cached ImageData if size matches, otherwise reallocate
+            if (partialCachedWidth !== dw || partialCachedHeight !== dh) {
+                partialImageData = ctx.createImageData(dw, dh);
+                partialCachedWidth = dw;
+                partialCachedHeight = dh;
+            }
+            const dst = partialImageData.data;
 
             // Copy only the dirty region from the framebuffer
             for (let y = 0; y < dh; y++) {
@@ -393,7 +402,7 @@
                 dst.set(HEAPU8.subarray(srcRowStart, srcRowStart + dw * 4), dstRowStart);
             }
 
-            ctx.putImageData(partialData, dx, dy);
+            ctx.putImageData(partialImageData, dx, dy);
         };
 
         // Helper functions are called from C++ via EM_ASM directly
