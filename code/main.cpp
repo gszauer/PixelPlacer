@@ -72,6 +72,9 @@ int main(int argc, char* argv[]) {
 #if defined(__EMSCRIPTEN__)
 #include "platform_wasm.cpp"
 #include "wasm_window.cpp"
+#elif defined(_WIN32)
+#include "platform_windows.cpp"
+#include "win32_window.cpp"
 #elif defined(__linux__)
 #include "platform_linux.cpp"
 #include "x11_window.cpp"
