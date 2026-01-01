@@ -10,6 +10,9 @@ Document::Document(u32 w, u32 h, const std::string& n)
 
     // Create initial background layer
     addPixelLayer("Background");
+
+    // Clear undo history - the initial layer shouldn't be undoable
+    undoHistory.clear();
 }
 
 LayerBase* Document::addLayer(std::unique_ptr<LayerBase> layer, i32 index) {
@@ -25,6 +28,9 @@ LayerBase* Document::addLayer(std::unique_ptr<LayerBase> layer, i32 index) {
     if (activeLayerIndex < 0) {
         activeLayerIndex = index;
     }
+
+    // Record undo for layer addition
+    recordLayerAdd(index);
 
     notifyLayerAdded(index);
     return ptr;
@@ -72,6 +78,9 @@ AdjustmentLayer* Document::addAdjustmentLayer(AdjustmentType type, i32 index) {
 void Document::removeLayer(i32 index) {
     if (index < 0 || index >= static_cast<i32>(layers.size())) return;
     if (layers.size() <= 1) return; // Keep at least one layer
+
+    // Record undo BEFORE removing the layer so we capture it
+    recordLayerRemove(index);
 
     layers.erase(layers.begin() + index);
 
@@ -1369,4 +1378,297 @@ void Document::notifySelectionChanged() {
     for (auto* observer : observers) {
         observer->onSelectionChanged();
     }
+}
+
+// ============================================================================
+// Undo/Redo Implementation
+// ============================================================================
+
+void Document::beginPixelUndo(const std::string& name, i32 layerIndex) {
+    // Cancel any existing pending step
+    cancelUndo();
+
+    pendingUndoStep = UndoStep(name, UndoStepType::PixelEdit);
+    pendingUndoStep->tileDelta = TileDelta();
+    pendingUndoStep->tileDelta->layerIndex = layerIndex;
+    capturedTileKeys.clear();
+}
+
+void Document::captureOriginalTile(i32 layerIndex, u64 tileKey) {
+    if (!pendingUndoStep || !pendingUndoStep->tileDelta) return;
+    if (pendingUndoStep->tileDelta->layerIndex != layerIndex) return;
+
+    // Only capture each tile once per operation
+    if (capturedTileKeys.find(tileKey) != capturedTileKeys.end()) return;
+    capturedTileKeys.insert(tileKey);
+
+    // Get the pixel layer
+    LayerBase* layer = getLayer(layerIndex);
+    if (!layer || !layer->isPixelLayer()) return;
+
+    PixelLayer* pixelLayer = static_cast<PixelLayer*>(layer);
+
+    // Clone the tile (or store nullptr if it doesn't exist yet)
+    std::unique_ptr<Tile> tileCopy = pixelLayer->canvas.cloneTileByKey(tileKey);
+    pendingUndoStep->tileDelta->originalTiles[tileKey] = std::move(tileCopy);
+}
+
+void Document::captureOriginalTilesInRect(i32 layerIndex, const Recti& bounds) {
+    if (!pendingUndoStep || !pendingUndoStep->tileDelta) return;
+
+    LayerBase* layer = getLayer(layerIndex);
+    if (!layer || !layer->isPixelLayer()) return;
+
+    PixelLayer* pixelLayer = static_cast<PixelLayer*>(layer);
+
+    // Get all tile keys in the bounds
+    std::vector<u64> keys = pixelLayer->canvas.getTileKeysInRect(bounds);
+    for (u64 key : keys) {
+        captureOriginalTile(layerIndex, key);
+    }
+}
+
+void Document::commitUndo() {
+    if (!pendingUndoStep) return;
+
+    // For pixel edits, capture the new state for redo
+    if (pendingUndoStep->tileDelta) {
+        i32 layerIndex = pendingUndoStep->tileDelta->layerIndex;
+        LayerBase* layer = getLayer(layerIndex);
+
+        if (layer && layer->isPixelLayer()) {
+            PixelLayer* pixelLayer = static_cast<PixelLayer*>(layer);
+
+            // Capture current (new) state for all tiles we tracked
+            for (const auto& [key, originalTile] : pendingUndoStep->tileDelta->originalTiles) {
+                std::unique_ptr<Tile> newTile = pixelLayer->canvas.cloneTileByKey(key);
+                pendingUndoStep->tileDelta->newTiles[key] = std::move(newTile);
+            }
+        }
+    }
+
+    // Push to history
+    undoHistory.pushStep(std::move(*pendingUndoStep));
+    pendingUndoStep.reset();
+    capturedTileKeys.clear();
+}
+
+void Document::cancelUndo() {
+    pendingUndoStep.reset();
+    capturedTileKeys.clear();
+}
+
+void Document::recordLayerAdd(i32 index) {
+    UndoStep step("Add Layer", UndoStepType::LayerAdd);
+    step.layerSnapshot = LayerSnapshot();
+    step.layerSnapshot->layerIndex = index;
+    // We don't need to store the layer itself for add - we'll remove it on undo
+    step.layerSnapshot->layer = nullptr;
+
+    undoHistory.pushStep(std::move(step));
+}
+
+void Document::recordLayerRemove(i32 index) {
+    if (index < 0 || index >= static_cast<i32>(layers.size())) return;
+
+    UndoStep step("Delete Layer", UndoStepType::LayerRemove);
+    step.layerSnapshot = LayerSnapshot();
+    step.layerSnapshot->layerIndex = index;
+    step.layerSnapshot->layer = layers[index]->clone();
+
+    undoHistory.pushStep(std::move(step));
+}
+
+void Document::recordSelectionChange(const std::string& name) {
+    UndoStep step(name, UndoStepType::SelectionChange);
+    step.selectionSnapshot = SelectionSnapshot();
+    step.selectionSnapshot->selection = selection;
+
+    undoHistory.pushStep(std::move(step));
+}
+
+void Document::undo() {
+    if (!undoHistory.canUndo()) return;
+
+    UndoStep& step = undoHistory.peekUndo();
+
+    switch (step.type) {
+        case UndoStepType::PixelEdit: {
+            if (!step.tileDelta) break;
+
+            i32 layerIndex = step.tileDelta->layerIndex;
+            LayerBase* layer = getLayer(layerIndex);
+            if (!layer || !layer->isPixelLayer()) break;
+
+            PixelLayer* pixelLayer = static_cast<PixelLayer*>(layer);
+
+            // Swap original tiles back into the canvas
+            // The canvas will return the current tiles (which we stored as newTiles already)
+            for (auto& [key, originalTile] : step.tileDelta->originalTiles) {
+                auto it = pixelLayer->canvas.tiles.find(key);
+                if (it != pixelLayer->canvas.tiles.end()) {
+                    if (originalTile) {
+                        it->second = std::move(originalTile);
+                    } else {
+                        pixelLayer->canvas.tiles.erase(it);
+                    }
+                } else if (originalTile) {
+                    pixelLayer->canvas.tiles[key] = std::move(originalTile);
+                }
+            }
+
+            // Move the new tiles back to originalTiles for redo
+            std::swap(step.tileDelta->originalTiles, step.tileDelta->newTiles);
+
+            notifyLayerChanged(layerIndex);
+            notifyChanged(Rect(0, 0, width, height));
+            break;
+        }
+
+        case UndoStepType::LayerAdd: {
+            if (!step.layerSnapshot) break;
+
+            i32 index = step.layerSnapshot->layerIndex;
+
+            // Undo add = remove the layer (but capture it first for redo)
+            if (index >= 0 && index < static_cast<i32>(layers.size())) {
+                step.layerSnapshot->layer = std::move(layers[index]);
+                removeLayerInternal(index);
+            }
+            break;
+        }
+
+        case UndoStepType::LayerRemove: {
+            if (!step.layerSnapshot || !step.layerSnapshot->layer) break;
+
+            i32 index = step.layerSnapshot->layerIndex;
+
+            // Undo remove = re-insert the layer
+            insertLayerInternal(index, std::move(step.layerSnapshot->layer));
+            step.layerSnapshot->layer = nullptr;  // Will be recaptured on redo
+            break;
+        }
+
+        case UndoStepType::SelectionChange: {
+            if (!step.selectionSnapshot) break;
+
+            // Swap current selection with stored selection
+            std::swap(selection, step.selectionSnapshot->selection);
+            notifySelectionChanged();
+            break;
+        }
+    }
+
+    undoHistory.moveTopToRedo();
+}
+
+void Document::redo() {
+    if (!undoHistory.canRedo()) return;
+
+    UndoStep& step = undoHistory.peekRedo();
+
+    switch (step.type) {
+        case UndoStepType::PixelEdit: {
+            if (!step.tileDelta) break;
+
+            i32 layerIndex = step.tileDelta->layerIndex;
+            LayerBase* layer = getLayer(layerIndex);
+            if (!layer || !layer->isPixelLayer()) break;
+
+            PixelLayer* pixelLayer = static_cast<PixelLayer*>(layer);
+
+            // Swap tiles back (same logic as undo - originalTiles now has the "new" state)
+            for (auto& [key, tile] : step.tileDelta->originalTiles) {
+                auto it = pixelLayer->canvas.tiles.find(key);
+                if (it != pixelLayer->canvas.tiles.end()) {
+                    if (tile) {
+                        it->second = std::move(tile);
+                    } else {
+                        pixelLayer->canvas.tiles.erase(it);
+                    }
+                } else if (tile) {
+                    pixelLayer->canvas.tiles[key] = std::move(tile);
+                }
+            }
+
+            // Swap back for future undo
+            std::swap(step.tileDelta->originalTiles, step.tileDelta->newTiles);
+
+            notifyLayerChanged(layerIndex);
+            notifyChanged(Rect(0, 0, width, height));
+            break;
+        }
+
+        case UndoStepType::LayerAdd: {
+            if (!step.layerSnapshot || !step.layerSnapshot->layer) break;
+
+            i32 index = step.layerSnapshot->layerIndex;
+
+            // Redo add = re-insert the layer
+            insertLayerInternal(index, std::move(step.layerSnapshot->layer));
+            step.layerSnapshot->layer = nullptr;
+            break;
+        }
+
+        case UndoStepType::LayerRemove: {
+            if (!step.layerSnapshot) break;
+
+            i32 index = step.layerSnapshot->layerIndex;
+
+            // Redo remove = remove the layer again (capture for undo)
+            if (index >= 0 && index < static_cast<i32>(layers.size())) {
+                step.layerSnapshot->layer = std::move(layers[index]);
+                removeLayerInternal(index);
+            }
+            break;
+        }
+
+        case UndoStepType::SelectionChange: {
+            if (!step.selectionSnapshot) break;
+
+            // Swap current selection with stored selection
+            std::swap(selection, step.selectionSnapshot->selection);
+            notifySelectionChanged();
+            break;
+        }
+    }
+
+    undoHistory.moveTopToUndo();
+}
+
+std::string Document::getUndoMenuText() const {
+    if (!undoHistory.canUndo()) return "Undo";
+    return "Undo " + undoHistory.getUndoName();
+}
+
+std::string Document::getRedoMenuText() const {
+    if (!undoHistory.canRedo()) return "Redo";
+    return "Redo " + undoHistory.getRedoName();
+}
+
+void Document::removeLayerInternal(i32 index) {
+    if (index < 0 || index >= static_cast<i32>(layers.size())) return;
+    if (layers.size() <= 1) return; // Keep at least one layer
+
+    layers.erase(layers.begin() + index);
+
+    // Adjust active layer index
+    if (activeLayerIndex >= static_cast<i32>(layers.size())) {
+        activeLayerIndex = static_cast<i32>(layers.size()) - 1;
+    }
+
+    notifyLayerRemoved(index);
+}
+
+void Document::insertLayerInternal(i32 index, std::unique_ptr<LayerBase> layer) {
+    if (index < 0) index = 0;
+    if (index > static_cast<i32>(layers.size())) index = static_cast<i32>(layers.size());
+
+    layers.insert(layers.begin() + index, std::move(layer));
+
+    if (activeLayerIndex < 0) {
+        activeLayerIndex = index;
+    }
+
+    notifyLayerAdded(index);
 }

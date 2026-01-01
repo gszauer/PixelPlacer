@@ -575,6 +575,7 @@ public:
     u32 borderColor = Config::COLOR_BORDER;
 
     std::function<void()> onClose;
+    std::function<void()> onWillShow;  // Called before menu is shown, for updating item states
 
     PopupMenu() {
         visible = false;
@@ -586,6 +587,18 @@ public:
 
     void addSeparator() {
         items.push_back(MenuItem());
+    }
+
+    void setItemEnabled(size_t index, bool enabled) {
+        if (index < items.size()) {
+            items[index].enabled = enabled;
+        }
+    }
+
+    void setItemLabel(size_t index, const std::string& label) {
+        if (index < items.size()) {
+            items[index].label = label;
+        }
     }
 
     void show(f32 x, f32 y);

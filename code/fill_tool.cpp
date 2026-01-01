@@ -37,6 +37,11 @@ void FillTool::onMouseDown(Document& doc, const ToolEvent& e) {
 
     if (targetColor == fillColor) return;
 
+    // Begin undo - capture all tiles since fill can affect anywhere
+    doc.beginPixelUndo("Fill", doc.activeLayerIndex);
+    Recti fullBounds(0, 0, layer->canvas.width, layer->canvas.height);
+    doc.captureOriginalTilesInRect(doc.activeLayerIndex, fullBounds);
+
     if (contiguous) {
         floodFillTransformed(layer->canvas, layerX, layerY, targetColor, fillColor,
                              tolerance, sel, layerToDoc, doc.width, doc.height);
@@ -44,6 +49,9 @@ void FillTool::onMouseDown(Document& doc, const ToolEvent& e) {
         globalFillTransformed(layer->canvas, targetColor, fillColor, tolerance,
                               sel, layerToDoc, doc.width, doc.height);
     }
+
+    // Commit undo
+    doc.commitUndo();
 
     doc.notifyChanged(Rect(0, 0, doc.width, doc.height));
 }

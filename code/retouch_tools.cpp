@@ -48,6 +48,9 @@ void CloneTool::onMouseDown(Document& doc, const ToolEvent& e) {
     PixelLayer* layer = doc.getActivePixelLayer();
     if (!layer || layer->locked) return;
 
+    // Begin undo
+    doc.beginPixelUndo("Clone", doc.activeLayerIndex);
+
     updateStamp();
     stroking = true;
     lastPos = e.position;
@@ -69,8 +72,17 @@ void CloneTool::onMouseDown(Document& doc, const ToolEvent& e) {
         }
     });
 
-    cloneAt(layer->canvas, e.position, e.pressure, docToLayerTransform);
+    // Capture tiles before modifying
     f32 size = state.brushSize;
+    Recti affectedRect(
+        static_cast<i32>(e.position.x - size),
+        static_cast<i32>(e.position.y - size),
+        static_cast<i32>(size * 2) + 1,
+        static_cast<i32>(size * 2) + 1
+    );
+    doc.captureOriginalTilesInRect(doc.activeLayerIndex, affectedRect);
+
+    cloneAt(layer->canvas, e.position, e.pressure, docToLayerTransform);
     doc.notifyChanged(Rect(e.position.x - size, e.position.y - size, size * 2, size * 2));
 }
 
@@ -80,6 +92,17 @@ void CloneTool::onMouseDrag(Document& doc, const ToolEvent& e) {
 
     PixelLayer* layer = strokeLayer;
     if (layer->locked) return;
+
+    f32 size = state.brushSize;
+
+    // Capture tiles along the stroke path for undo
+    Recti strokeRect(
+        static_cast<i32>(std::min(lastPos.x, e.position.x) - size),
+        static_cast<i32>(std::min(lastPos.y, e.position.y) - size),
+        static_cast<i32>(std::abs(e.position.x - lastPos.x) + size * 2) + 1,
+        static_cast<i32>(std::abs(e.position.y - lastPos.y) + size * 2) + 1
+    );
+    doc.captureOriginalTilesInRect(doc.activeLayerIndex, strokeRect);
 
     // Clone along the stroke
     Vec2 delta = e.position - lastPos;
@@ -92,7 +115,6 @@ void CloneTool::onMouseDrag(Document& doc, const ToolEvent& e) {
         cloneAt(layer->canvas, pos, e.pressure, docToLayerTransform);
     }
 
-    f32 size = state.brushSize;
     Rect dirty(
         std::min(lastPos.x, e.position.x) - size,
         std::min(lastPos.y, e.position.y) - size,
@@ -105,6 +127,9 @@ void CloneTool::onMouseDrag(Document& doc, const ToolEvent& e) {
 }
 
 void CloneTool::onMouseUp(Document& doc, const ToolEvent& e) {
+    // Commit undo
+    doc.commitUndo();
+
     stroking = false;
     sourceSnapshot.reset();  // Free the snapshot
     strokeLayer = nullptr;
@@ -240,6 +265,9 @@ void SmudgeTool::onMouseDown(Document& doc, const ToolEvent& e) {
     PixelLayer* layer = doc.getActivePixelLayer();
     if (!layer || layer->locked) return;
 
+    // Begin undo
+    doc.beginPixelUndo("Smudge", doc.activeLayerIndex);
+
     updateStamp();
     stroking = true;
     lastPos = e.position;
@@ -258,11 +286,20 @@ void SmudgeTool::onMouseDown(Document& doc, const ToolEvent& e) {
     // Initialize carried color buffer by sampling from canvas
     sampleCarriedColors(layer->canvas, layerPos);
 
+    // Capture tiles before modifying
+    AppState& state = getAppState();
+    f32 size = state.brushSize;
+    Recti affectedRect(
+        static_cast<i32>(e.position.x - size),
+        static_cast<i32>(e.position.y - size),
+        static_cast<i32>(size * 2) + 1,
+        static_cast<i32>(size * 2) + 1
+    );
+    doc.captureOriginalTilesInRect(doc.activeLayerIndex, affectedRect);
+
     // Apply first smudge dab
     smudgeAt(layer->canvas, layerPos, e.pressure);
 
-    AppState& state = getAppState();
-    f32 size = state.brushSize;
     doc.notifyChanged(Rect(e.position.x - size, e.position.y - size, size * 2, size * 2));
 }
 
@@ -271,6 +308,18 @@ void SmudgeTool::onMouseDrag(Document& doc, const ToolEvent& e) {
 
     PixelLayer* layer = strokeLayer;
     if (layer->locked) return;
+
+    AppState& state = getAppState();
+    f32 size = state.brushSize;
+
+    // Capture tiles along the stroke path for undo
+    Recti strokeRect(
+        static_cast<i32>(std::min(lastPos.x, e.position.x) - size),
+        static_cast<i32>(std::min(lastPos.y, e.position.y) - size),
+        static_cast<i32>(std::abs(e.position.x - lastPos.x) + size * 2) + 1,
+        static_cast<i32>(std::abs(e.position.y - lastPos.y) + size * 2) + 1
+    );
+    doc.captureOriginalTilesInRect(doc.activeLayerIndex, strokeRect);
 
     // Transform positions to layer space
     Vec2 lastLayerPos = docToLayerTransform.transform(lastPos);
@@ -287,8 +336,6 @@ void SmudgeTool::onMouseDrag(Document& doc, const ToolEvent& e) {
         smudgeAt(layer->canvas, layerPos, e.pressure);
     }
 
-    AppState& state = getAppState();
-    f32 size = state.brushSize;
     Rect dirty(
         std::min(lastPos.x, e.position.x) - size,
         std::min(lastPos.y, e.position.y) - size,
@@ -301,6 +348,9 @@ void SmudgeTool::onMouseDrag(Document& doc, const ToolEvent& e) {
 }
 
 void SmudgeTool::onMouseUp(Document& doc, const ToolEvent& e) {
+    // Commit undo
+    doc.commitUndo();
+
     stroking = false;
     carriedColors.clear();
     carriedSize = 0;
@@ -445,6 +495,9 @@ void DodgeTool::onMouseDown(Document& doc, const ToolEvent& e) {
     PixelLayer* layer = doc.getActivePixelLayer();
     if (!layer || layer->locked) return;
 
+    // Begin undo
+    doc.beginPixelUndo("Dodge", doc.activeLayerIndex);
+
     updateStamp();
     stroking = true;
     lastPos = e.position;
@@ -460,9 +513,18 @@ void DodgeTool::onMouseDown(Document& doc, const ToolEvent& e) {
     // Transform to layer space
     Vec2 layerPos = docToLayerTransform.transform(e.position);
 
-    dodgeAt(layer->canvas, layerPos, e.pressure);
+    // Capture tiles before modifying
     AppState& state = getAppState();
     f32 size = state.brushSize;
+    Recti affectedRect(
+        static_cast<i32>(e.position.x - size),
+        static_cast<i32>(e.position.y - size),
+        static_cast<i32>(size * 2) + 1,
+        static_cast<i32>(size * 2) + 1
+    );
+    doc.captureOriginalTilesInRect(doc.activeLayerIndex, affectedRect);
+
+    dodgeAt(layer->canvas, layerPos, e.pressure);
     doc.notifyChanged(Rect(e.position.x - size, e.position.y - size, size * 2, size * 2));
 }
 
@@ -471,6 +533,18 @@ void DodgeTool::onMouseDrag(Document& doc, const ToolEvent& e) {
 
     PixelLayer* layer = strokeLayer;
     if (layer->locked) return;
+
+    AppState& state = getAppState();
+    f32 size = state.brushSize;
+
+    // Capture tiles along the stroke path for undo
+    Recti strokeRect(
+        static_cast<i32>(std::min(lastPos.x, e.position.x) - size),
+        static_cast<i32>(std::min(lastPos.y, e.position.y) - size),
+        static_cast<i32>(std::abs(e.position.x - lastPos.x) + size * 2) + 1,
+        static_cast<i32>(std::abs(e.position.y - lastPos.y) + size * 2) + 1
+    );
+    doc.captureOriginalTilesInRect(doc.activeLayerIndex, strokeRect);
 
     // Transform positions to layer space
     Vec2 lastLayerPos = docToLayerTransform.transform(lastPos);
@@ -487,8 +561,6 @@ void DodgeTool::onMouseDrag(Document& doc, const ToolEvent& e) {
         dodgeAt(layer->canvas, layerPos, e.pressure);
     }
 
-    AppState& state = getAppState();
-    f32 size = state.brushSize;
     Rect dirty(
         std::min(lastPos.x, e.position.x) - size,
         std::min(lastPos.y, e.position.y) - size,
@@ -501,6 +573,9 @@ void DodgeTool::onMouseDrag(Document& doc, const ToolEvent& e) {
 }
 
 void DodgeTool::onMouseUp(Document& doc, const ToolEvent& e) {
+    // Commit undo
+    doc.commitUndo();
+
     stroking = false;
     strokeLayer = nullptr;
 }
@@ -598,6 +673,9 @@ void BurnTool::onMouseDown(Document& doc, const ToolEvent& e) {
     PixelLayer* layer = doc.getActivePixelLayer();
     if (!layer || layer->locked) return;
 
+    // Begin undo
+    doc.beginPixelUndo("Burn", doc.activeLayerIndex);
+
     updateStamp();
     stroking = true;
     lastPos = e.position;
@@ -613,9 +691,18 @@ void BurnTool::onMouseDown(Document& doc, const ToolEvent& e) {
     // Transform to layer space
     Vec2 layerPos = docToLayerTransform.transform(e.position);
 
-    burnAt(layer->canvas, layerPos, e.pressure);
+    // Capture tiles before modifying
     AppState& state = getAppState();
     f32 size = state.brushSize;
+    Recti affectedRect(
+        static_cast<i32>(e.position.x - size),
+        static_cast<i32>(e.position.y - size),
+        static_cast<i32>(size * 2) + 1,
+        static_cast<i32>(size * 2) + 1
+    );
+    doc.captureOriginalTilesInRect(doc.activeLayerIndex, affectedRect);
+
+    burnAt(layer->canvas, layerPos, e.pressure);
     doc.notifyChanged(Rect(e.position.x - size, e.position.y - size, size * 2, size * 2));
 }
 
@@ -624,6 +711,18 @@ void BurnTool::onMouseDrag(Document& doc, const ToolEvent& e) {
 
     PixelLayer* layer = strokeLayer;
     if (layer->locked) return;
+
+    AppState& state = getAppState();
+    f32 size = state.brushSize;
+
+    // Capture tiles along the stroke path for undo
+    Recti strokeRect(
+        static_cast<i32>(std::min(lastPos.x, e.position.x) - size),
+        static_cast<i32>(std::min(lastPos.y, e.position.y) - size),
+        static_cast<i32>(std::abs(e.position.x - lastPos.x) + size * 2) + 1,
+        static_cast<i32>(std::abs(e.position.y - lastPos.y) + size * 2) + 1
+    );
+    doc.captureOriginalTilesInRect(doc.activeLayerIndex, strokeRect);
 
     // Transform positions to layer space
     Vec2 lastLayerPos = docToLayerTransform.transform(lastPos);
@@ -640,8 +739,6 @@ void BurnTool::onMouseDrag(Document& doc, const ToolEvent& e) {
         burnAt(layer->canvas, layerPos, e.pressure);
     }
 
-    AppState& state = getAppState();
-    f32 size = state.brushSize;
     Rect dirty(
         std::min(lastPos.x, e.position.x) - size,
         std::min(lastPos.y, e.position.y) - size,
@@ -654,6 +751,9 @@ void BurnTool::onMouseDrag(Document& doc, const ToolEvent& e) {
 }
 
 void BurnTool::onMouseUp(Document& doc, const ToolEvent& e) {
+    // Commit undo
+    doc.commitUndo();
+
     stroking = false;
     strokeLayer = nullptr;
 }

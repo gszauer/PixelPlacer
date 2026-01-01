@@ -1921,6 +1921,9 @@ void Panel::renderSelf(Framebuffer& fb) {
 
 // PopupMenu implementations
 void PopupMenu::show(f32 x, f32 y) {
+    // Call onWillShow to allow updating item states before display
+    if (onWillShow) onWillShow();
+
     // Calculate size based on items
     f32 itemHeight = 24 * Config::uiScale;
     f32 separatorHeight = 8 * Config::uiScale;

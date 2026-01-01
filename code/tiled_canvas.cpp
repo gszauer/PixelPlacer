@@ -163,3 +163,79 @@ Tile* TiledCanvas::getTile(i32 tileX, i32 tileY) {
     auto it = tiles.find(key);
     return it != tiles.end() ? it->second.get() : nullptr;
 }
+
+std::unordered_map<u64, std::unique_ptr<Tile>> TiledCanvas::cloneTilesInRect(const Recti& bounds) const {
+    std::unordered_map<u64, std::unique_ptr<Tile>> result;
+
+    // Calculate tile range that intersects the bounds
+    i32 tileSize = static_cast<i32>(Config::TILE_SIZE);
+    i32 startTileX = floorDiv(bounds.x, tileSize);
+    i32 startTileY = floorDiv(bounds.y, tileSize);
+    i32 endTileX = floorDiv(bounds.x + bounds.w - 1, tileSize);
+    i32 endTileY = floorDiv(bounds.y + bounds.h - 1, tileSize);
+
+    for (i32 ty = startTileY; ty <= endTileY; ++ty) {
+        for (i32 tx = startTileX; tx <= endTileX; ++tx) {
+            u64 key = makeTileKey(tx, ty);
+            auto it = tiles.find(key);
+            if (it != tiles.end()) {
+                result[key] = it->second->clone();
+            }
+        }
+    }
+
+    return result;
+}
+
+std::unique_ptr<Tile> TiledCanvas::cloneTileByKey(u64 key) const {
+    auto it = tiles.find(key);
+    if (it != tiles.end()) {
+        return it->second->clone();
+    }
+    return nullptr;
+}
+
+std::unordered_map<u64, std::unique_ptr<Tile>> TiledCanvas::swapTiles(
+    std::unordered_map<u64, std::unique_ptr<Tile>>& newTiles) {
+
+    std::unordered_map<u64, std::unique_ptr<Tile>> oldTiles;
+
+    for (auto& [key, newTile] : newTiles) {
+        auto it = tiles.find(key);
+        if (it != tiles.end()) {
+            // Swap existing tile
+            oldTiles[key] = std::move(it->second);
+            if (newTile) {
+                it->second = std::move(newTile);
+            } else {
+                tiles.erase(it);
+            }
+        } else {
+            // No existing tile - oldTiles[key] stays nullptr
+            oldTiles[key] = nullptr;
+            if (newTile) {
+                tiles[key] = std::move(newTile);
+            }
+        }
+    }
+
+    return oldTiles;
+}
+
+std::vector<u64> TiledCanvas::getTileKeysInRect(const Recti& bounds) const {
+    std::vector<u64> result;
+
+    i32 tileSize = static_cast<i32>(Config::TILE_SIZE);
+    i32 startTileX = floorDiv(bounds.x, tileSize);
+    i32 startTileY = floorDiv(bounds.y, tileSize);
+    i32 endTileX = floorDiv(bounds.x + bounds.w - 1, tileSize);
+    i32 endTileY = floorDiv(bounds.y + bounds.h - 1, tileSize);
+
+    for (i32 ty = startTileY; ty <= endTileY; ++ty) {
+        for (i32 tx = startTileX; tx <= endTileX; ++tx) {
+            result.push_back(makeTileKey(tx, ty));
+        }
+    }
+
+    return result;
+}

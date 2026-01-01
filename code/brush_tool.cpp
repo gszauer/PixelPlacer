@@ -54,6 +54,9 @@ void BrushTool::onMouseDown(Document& doc, const ToolEvent& e) {
     updateFromAppState();
     ensureStamp();
 
+    // Begin undo recording
+    doc.beginPixelUndo("Brush Stroke", doc.activeLayerIndex);
+
     stroking = true;
     lastPos = e.position;
     strokeLayer = layer;
@@ -93,6 +96,12 @@ void BrushTool::onMouseDown(Document& doc, const ToolEvent& e) {
         i32 py = static_cast<i32>(std::floor(layerPos.y));
         lastPixelX = px;
         lastPixelY = py;
+
+        // Capture tile before modifying for undo
+        i32 tileX = floorDiv(px, static_cast<i32>(Config::TILE_SIZE));
+        i32 tileY = floorDiv(py, static_cast<i32>(Config::TILE_SIZE));
+        doc.captureOriginalTile(doc.activeLayerIndex, makeTileKey(tileX, tileY));
+
         BrushRenderer::pencilPixel(layer->canvas, px, py, strokeColor, effectiveFlow, sel, selTransform);
         doc.notifyChanged(Rect(e.position.x - 1, e.position.y - 1, 3, 3));
     } else {
@@ -164,6 +173,16 @@ void BrushTool::onMouseDrag(Document& doc, const ToolEvent& e) {
         // Pencil mode: pixel-perfect line directly to canvas
         i32 px = static_cast<i32>(std::floor(layerPosTo.x));
         i32 py = static_cast<i32>(std::floor(layerPosTo.y));
+
+        // Capture tiles along the line for undo
+        Recti lineBounds(
+            std::min(lastPixelX, px),
+            std::min(lastPixelY, py),
+            std::abs(px - lastPixelX) + 1,
+            std::abs(py - lastPixelY) + 1
+        );
+        doc.captureOriginalTilesInRect(doc.activeLayerIndex, lineBounds);
+
         BrushRenderer::pencilLine(layer->canvas, lastPixelX, lastPixelY, px, py,
             strokeColor, effectiveFlow, sel, selTransform);
         dirty = Rect(
@@ -224,6 +243,15 @@ void BrushTool::onMouseUp(Document& doc, const ToolEvent& e) {
 
     // For brush mode (not pencil), composite stroke buffer to layer
     if (!isPencilMode() && strokeBuffer && strokeLayer) {
+        // Capture tiles that will be affected by the composite for undo
+        Recti strokeBoundsInt(
+            static_cast<i32>(std::floor(strokeBounds.x)),
+            static_cast<i32>(std::floor(strokeBounds.y)),
+            static_cast<i32>(std::ceil(strokeBounds.w)) + 1,
+            static_cast<i32>(std::ceil(strokeBounds.h)) + 1
+        );
+        doc.captureOriginalTilesInRect(doc.activeLayerIndex, strokeBoundsInt);
+
         // Composite the stroke buffer onto the layer with stroke opacity
         BrushRenderer::compositeStrokeToLayer(strokeLayer->canvas, *strokeBuffer, opacity, BlendMode::Normal);
 
@@ -251,6 +279,9 @@ void BrushTool::onMouseUp(Document& doc, const ToolEvent& e) {
         Rect docBounds(minX, minY, maxX - minX, maxY - minY);
         doc.notifyChanged(docBounds);
     }
+
+    // Commit undo step
+    doc.commitUndo();
 
     // Cleanup
     stroking = false;

@@ -1541,6 +1541,26 @@ PopupMenu* MenuBar::createFileMenu() {
 PopupMenu* MenuBar::createEditMenu() {
     auto* menu = new PopupMenu();
 
+    menu->addItem("Undo", "", [this]() {
+        closeActiveMenu();
+        Document* doc = getAppState().activeDocument;
+        if (doc && doc->canUndo()) {
+            doc->undo();
+            getAppState().needsRedraw = true;
+        }
+    });
+
+    menu->addItem("Redo", "", [this]() {
+        closeActiveMenu();
+        Document* doc = getAppState().activeDocument;
+        if (doc && doc->canRedo()) {
+            doc->redo();
+            getAppState().needsRedraw = true;
+        }
+    });
+
+    menu->addSeparator();
+
     menu->addItem("Cut", "", [this]() {
         closeActiveMenu();
         Document* doc = getAppState().activeDocument;
@@ -1571,6 +1591,25 @@ PopupMenu* MenuBar::createEditMenu() {
         closeActiveMenu();
         if (onRenameDocument) onRenameDocument();
     });
+
+    // Update Undo/Redo enabled state and labels when menu opens
+    menu->onWillShow = [menu]() {
+        Document* doc = getAppState().activeDocument;
+        bool canUndo = doc && doc->canUndo();
+        bool canRedo = doc && doc->canRedo();
+
+        menu->setItemEnabled(0, canUndo);  // Undo
+        menu->setItemEnabled(1, canRedo);  // Redo
+
+        // Update labels to show action name
+        if (doc) {
+            menu->setItemLabel(0, doc->getUndoMenuText());
+            menu->setItemLabel(1, doc->getRedoMenuText());
+        } else {
+            menu->setItemLabel(0, "Undo");
+            menu->setItemLabel(1, "Redo");
+        }
+    };
 
     return menu;
 }

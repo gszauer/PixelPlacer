@@ -32,6 +32,9 @@ void EraserTool::onMouseDown(Document& doc, const ToolEvent& e) {
     updateFromAppState();
     ensureStamp();
 
+    // Begin undo recording
+    doc.beginPixelUndo("Erase", doc.activeLayerIndex);
+
     stroking = true;
     lastPos = e.position;
     strokeLayer = layer;
@@ -68,6 +71,12 @@ void EraserTool::onMouseDown(Document& doc, const ToolEvent& e) {
         i32 py = static_cast<i32>(std::floor(layerPos.y));
         lastPixelX = px;
         lastPixelY = py;
+
+        // Capture tile before modifying for undo
+        i32 tileX = floorDiv(px, static_cast<i32>(Config::TILE_SIZE));
+        i32 tileY = floorDiv(py, static_cast<i32>(Config::TILE_SIZE));
+        doc.captureOriginalTile(doc.activeLayerIndex, makeTileKey(tileX, tileY));
+
         BrushRenderer::pencilErase(layer->canvas, px, py, effectiveFlow, sel, selTransform);
         doc.notifyChanged(Rect(e.position.x - 1, e.position.y - 1, 3, 3));
     } else {
@@ -129,6 +138,16 @@ void EraserTool::onMouseDrag(Document& doc, const ToolEvent& e) {
         // Pencil mode: pixel-perfect line directly to canvas
         i32 px = static_cast<i32>(std::floor(layerPosTo.x));
         i32 py = static_cast<i32>(std::floor(layerPosTo.y));
+
+        // Capture tiles along the line for undo
+        Recti lineBounds(
+            std::min(lastPixelX, px),
+            std::min(lastPixelY, py),
+            std::abs(px - lastPixelX) + 1,
+            std::abs(py - lastPixelY) + 1
+        );
+        doc.captureOriginalTilesInRect(doc.activeLayerIndex, lineBounds);
+
         BrushRenderer::pencilEraseLine(layer->canvas, lastPixelX, lastPixelY, px, py, effectiveFlow, sel, selTransform);
         dirty = Rect(
             std::min(lastPos.x, e.position.x) - 1,
@@ -179,6 +198,15 @@ void EraserTool::onMouseUp(Document& doc, const ToolEvent& e) {
 
     // For eraser mode (not pencil), apply erase buffer to layer
     if (!isPencilMode() && strokeBuffer && strokeLayer) {
+        // Capture tiles that will be affected by the composite for undo
+        Recti strokeBoundsInt(
+            static_cast<i32>(std::floor(strokeBounds.x)),
+            static_cast<i32>(std::floor(strokeBounds.y)),
+            static_cast<i32>(std::ceil(strokeBounds.w)) + 1,
+            static_cast<i32>(std::ceil(strokeBounds.h)) + 1
+        );
+        doc.captureOriginalTilesInRect(doc.activeLayerIndex, strokeBoundsInt);
+
         // Apply the erase buffer to the layer with stroke opacity
         BrushRenderer::compositeEraseBufferToLayer(strokeLayer->canvas, *strokeBuffer, opacity);
 
@@ -212,6 +240,9 @@ void EraserTool::onMouseUp(Document& doc, const ToolEvent& e) {
         // Prune empty tiles for pencil mode too
         strokeLayer->canvas.pruneEmptyTiles();
     }
+
+    // Commit undo step
+    doc.commitUndo();
 
     // Cleanup
     stroking = false;

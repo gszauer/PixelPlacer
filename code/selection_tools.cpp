@@ -33,6 +33,7 @@ void RectangleSelectTool::onMouseUp(Document& doc, const ToolEvent& e) {
     i32 h = static_cast<i32>(std::abs(clampedEndY - clampedStartY));
 
     if (w > 0 && h > 0) {
+        doc.recordSelectionChange("Rectangle Select");
         bool antiAlias = getAppState().selectionAntiAlias;
         doc.selection.setRectangle(Recti(x, y, w, h), addMode, subtractMode, antiAlias);
         doc.notifySelectionChanged();
@@ -41,6 +42,7 @@ void RectangleSelectTool::onMouseUp(Document& doc, const ToolEvent& e) {
         i32 clickX = static_cast<i32>(e.position.x);
         i32 clickY = static_cast<i32>(e.position.y);
         if (doc.selection.hasSelection && !doc.selection.isSelected(clickX, clickY)) {
+            doc.recordSelectionChange("Deselect");
             doc.selection.clear();
             doc.notifySelectionChanged();
         }
@@ -78,6 +80,7 @@ void EllipseSelectTool::onMouseUp(Document& doc, const ToolEvent& e) {
     i32 h = static_cast<i32>(std::abs(clampedEndY - clampedStartY));
 
     if (w > 0 && h > 0) {
+        doc.recordSelectionChange("Ellipse Select");
         bool antiAlias = getAppState().selectionAntiAlias;
         doc.selection.setEllipse(Recti(x, y, w, h), addMode, subtractMode, antiAlias);
         doc.notifySelectionChanged();
@@ -86,6 +89,7 @@ void EllipseSelectTool::onMouseUp(Document& doc, const ToolEvent& e) {
         i32 clickX = static_cast<i32>(e.position.x);
         i32 clickY = static_cast<i32>(e.position.y);
         if (doc.selection.hasSelection && !doc.selection.isSelected(clickX, clickY)) {
+            doc.recordSelectionChange("Deselect");
             doc.selection.clear();
             doc.notifySelectionChanged();
         }
@@ -126,6 +130,7 @@ void FreeSelectTool::onMouseUp(Document& doc, const ToolEvent& e) {
     selecting = false;
 
     if (points.size() >= 3) {
+        doc.recordSelectionChange("Free Select");
         bool antiAlias = getAppState().selectionAntiAlias;
         doc.selection.setPolygon(points, addMode, subtractMode, antiAlias);
         doc.notifySelectionChanged();
@@ -134,6 +139,7 @@ void FreeSelectTool::onMouseUp(Document& doc, const ToolEvent& e) {
         i32 clickX = static_cast<i32>(e.position.x);
         i32 clickY = static_cast<i32>(e.position.y);
         if (doc.selection.hasSelection && !doc.selection.isSelected(clickX, clickY)) {
+            doc.recordSelectionChange("Deselect");
             doc.selection.clear();
             doc.notifySelectionChanged();
         }
@@ -162,6 +168,7 @@ void PolygonSelectTool::onMouseDown(Document& doc, const ToolEvent& e) {
             i32 clickX = static_cast<i32>(e.position.x);
             i32 clickY = static_cast<i32>(e.position.y);
             if (doc.selection.hasSelection && !doc.selection.isSelected(clickX, clickY)) {
+                doc.recordSelectionChange("Deselect");
                 doc.selection.clear();
                 doc.notifySelectionChanged();
             }
@@ -201,6 +208,7 @@ void PolygonSelectTool::onKeyDown(Document& doc, i32 keyCode) {
 
 void PolygonSelectTool::finishPolygon(Document& doc) {
     if (points.size() >= 3) {
+        doc.recordSelectionChange("Polygon Select");
         bool antiAlias = getAppState().selectionAntiAlias;
         doc.selection.setPolygon(points, addMode, subtractMode, antiAlias);
         doc.notifySelectionChanged();
@@ -241,6 +249,9 @@ void MagicWandTool::onMouseDown(Document& doc, const ToolEvent& e) {
 
     bool addMode = e.shiftHeld;
     bool subtractMode = e.altHeld;
+
+    // Record for undo
+    doc.recordSelectionChange("Magic Wand");
 
     if (!addMode && !subtractMode) {
         doc.selection.clear();

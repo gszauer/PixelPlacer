@@ -120,6 +120,9 @@ namespace Config {
     constexpr u32 MAX_LAYERS = 256;
     constexpr f32 SCROLL_SPEED = 20.0f;
     constexpr u32 DOUBLE_CLICK_MS = 400;
+
+    // Undo/Redo
+    constexpr u32 MAX_UNDO_STEPS = 20;
 }
 
 #endif

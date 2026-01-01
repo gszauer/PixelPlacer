@@ -311,6 +311,11 @@ void GradientTool::onMouseUp(Document& doc, const ToolEvent& e) {
     // Expand layer canvas to cover document bounds if needed
     expandLayerToDocument(layer, doc.width, doc.height);
 
+    // Begin undo - capture all tiles since gradient affects entire canvas
+    doc.beginPixelUndo("Gradient", doc.activeLayerIndex);
+    Recti fullBounds(0, 0, layer->canvas.width, layer->canvas.height);
+    doc.captureOriginalTilesInRect(doc.activeLayerIndex, fullBounds);
+
     // Read gradient type from fillMode: 1=Linear, 2=Radial
     bool isLinear = (state.fillMode == 1);
 
@@ -322,6 +327,9 @@ void GradientTool::onMouseUp(Document& doc, const ToolEvent& e) {
         applyRadialGradient(layer->canvas, doc.selection, startPos, endPos,
                            fgColor, bgColor, 0, 0, doc.width, doc.height);
     }
+
+    // Commit undo
+    doc.commitUndo();
 
     doc.notifyChanged(Rect(0, 0, doc.width, doc.height));
 }

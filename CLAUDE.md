@@ -37,6 +37,7 @@ cd www && python3 -m http.server 8080
 | UI changes | `code/main_window.cpp`, `code/panels.cpp`, `code/basic_widgets.cpp` |
 | Tool behavior | `code/tool.cpp`, `code/brush_tool.cpp`, `code/selection_tools.cpp` |
 | Document operations | `code/document.cpp`, `code/layer.h` |
+| Undo/Redo | `code/undo.h`, `code/undo.cpp`, `code/document.cpp` |
 | Rendering | `code/compositor.cpp`, `code/framebuffer.cpp` |
 | Configuration | `code/config.h` |
 | Application lifecycle | `code/application.cpp` |
@@ -180,6 +181,11 @@ This project uses unity build. Key points:
        break;
    ```
 
+7. **Add undo support** (see [Undo/Redo System](#undoredo-system) section):
+   - Call `doc.beginPixelUndo()` in `onMouseDown`
+   - Call `doc.captureOriginalTilesInRect()` before modifying pixels
+   - Call `doc.commitUndo()` in `onMouseUp`
+
 ### Adding a New Widget
 
 1. **Add to `code/basic_widgets.h`** or create new header:
@@ -293,6 +299,105 @@ PopupMenu* MenuBar::createEditMenu() {
        };
    }
    ```
+
+---
+
+## Undo/Redo System
+
+The undo system uses a hybrid approach: **tile deltas** for pixel operations (memory efficient) and **layer snapshots** for structural changes.
+
+### Key Files
+- `code/undo.h` - Data structures: `UndoStep`, `TileDelta`, `LayerSnapshot`, `UndoHistory`
+- `code/undo.cpp` - `UndoHistory` implementation
+- `code/document.cpp` - Undo/redo methods integrated into Document
+
+### Undo Step Types
+
+| Type | Used For | Storage |
+|------|----------|---------|
+| `PixelEdit` | Brush, eraser, fill, retouch tools | Only changed tiles (before/after) |
+| `LayerAdd` | Adding layers | Layer index (layer captured on undo) |
+| `LayerRemove` | Deleting layers | Full layer clone |
+| `SelectionChange` | Selection modifications | Selection mask copy |
+
+### Adding Undo to a Pixel Tool
+
+Tools that modify pixels follow this pattern:
+
+```cpp
+void MyTool::onMouseDown(Document& doc, const ToolEvent& e) {
+    PixelLayer* layer = doc.getActivePixelLayer();
+    if (!layer || layer->locked) return;
+
+    // 1. Begin undo step
+    doc.beginPixelUndo("My Tool", doc.activeLayerIndex);
+
+    // 2. Capture tiles BEFORE modifying them
+    f32 size = getAppState().brushSize;
+    Recti affectedRect(
+        static_cast<i32>(e.position.x - size),
+        static_cast<i32>(e.position.y - size),
+        static_cast<i32>(size * 2) + 1,
+        static_cast<i32>(size * 2) + 1
+    );
+    doc.captureOriginalTilesInRect(doc.activeLayerIndex, affectedRect);
+
+    // 3. Now modify pixels...
+    doMyOperation(layer->canvas, e.position);
+}
+
+void MyTool::onMouseDrag(Document& doc, const ToolEvent& e) {
+    // Capture tiles along stroke path before modifying
+    Recti strokeRect(...);  // Calculate bounding rect of stroke segment
+    doc.captureOriginalTilesInRect(doc.activeLayerIndex, strokeRect);
+
+    // Modify pixels...
+}
+
+void MyTool::onMouseUp(Document& doc, const ToolEvent& e) {
+    // 4. Commit the undo step
+    doc.commitUndo();
+}
+```
+
+### Key Methods
+
+| Method | Purpose |
+|--------|---------|
+| `doc.beginPixelUndo(name, layerIndex)` | Start a new pixel edit undo step |
+| `doc.captureOriginalTilesInRect(layerIndex, bounds)` | Capture tiles before modification |
+| `doc.captureOriginalTile(layerIndex, tileKey)` | Capture a single tile by key |
+| `doc.commitUndo()` | Finalize and push to undo stack |
+| `doc.cancelUndo()` | Discard pending undo step |
+| `doc.recordLayerAdd(index)` | Record layer addition (called automatically) |
+| `doc.recordLayerRemove(index)` | Record layer removal (called automatically) |
+| `doc.recordSelectionChange(name)` | Record selection change |
+
+### Selection Undo
+
+For selection tools, record the selection state BEFORE modifying:
+
+```cpp
+void MySelectionTool::onMouseUp(Document& doc, const ToolEvent& e) {
+    // Record current selection before changing it
+    doc.recordSelectionChange("My Selection");
+
+    // Now modify selection...
+    doc.selection.setRectangle(myRect);
+    doc.notifySelectionChanged();
+}
+```
+
+### Layer Operations
+
+Layer add/remove undo is automatic - `addLayer()` and `removeLayer()` call the appropriate record functions internally.
+
+### Memory Considerations
+
+- Tiles are 64×64 pixels × 4 bytes = 16KB each
+- With 20 undo steps and typical brush strokes (10-50 tiles), expect 3-16MB per document
+- Large operations (full canvas fill) capture all tiles - can use significant memory
+- Undo history is per-document and cleared when document closes
 
 ---
 
@@ -484,6 +589,7 @@ Document
         -> AdjustmentLayer (contains params)
     -> selection: Selection
     -> currentTool: unique_ptr<Tool>
+    -> undoHistory: UndoHistory (20 steps max)
 ```
 
 ### Widget Ownership

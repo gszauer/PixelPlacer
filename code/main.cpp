@@ -86,6 +86,7 @@ int main(int argc, char* argv[]) {
 #include "tile.cpp"
 #include "tiled_canvas.cpp"
 #include "layer.cpp"
+#include "undo.cpp"
 #include "document.cpp"
 #include "document_view.cpp"
 #include "selection.cpp"

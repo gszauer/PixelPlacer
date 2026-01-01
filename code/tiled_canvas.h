@@ -136,6 +136,21 @@ public:
     Tile* getOrCreateTile(i32 tileX, i32 tileY);
     const Tile* getTile(i32 tileX, i32 tileY) const;
     Tile* getTile(i32 tileX, i32 tileY);
+
+    // Undo support
+    // Clone only tiles that intersect the given rect (in pixel coords)
+    std::unordered_map<u64, std::unique_ptr<Tile>> cloneTilesInRect(const Recti& bounds) const;
+
+    // Clone a single tile by key (returns nullptr if tile doesn't exist)
+    std::unique_ptr<Tile> cloneTileByKey(u64 key) const;
+
+    // Restore tiles from a map, swapping with current tiles
+    // Returns the tiles that were replaced (for redo)
+    std::unordered_map<u64, std::unique_ptr<Tile>> swapTiles(
+        std::unordered_map<u64, std::unique_ptr<Tile>>& newTiles);
+
+    // Get tile keys that overlap a rect (in pixel coords)
+    std::vector<u64> getTileKeysInRect(const Recti& bounds) const;
 };
 
 #endif

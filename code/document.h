@@ -6,11 +6,14 @@
 #include "layer.h"
 #include "selection.h"
 #include "tiled_canvas.h"
+#include "undo.h"
 #include <vector>
 #include <memory>
 #include <string>
 #include <functional>
 #include <unordered_map>
+#include <unordered_set>
+#include <optional>
 
 // Forward declarations
 class Tool;
@@ -99,6 +102,11 @@ public:
 
     // Observers (non-owning)
     std::vector<DocumentObserver*> observers;
+
+    // Undo/Redo support
+    UndoHistory undoHistory;
+    std::optional<UndoStep> pendingUndoStep;
+    std::unordered_set<u64> capturedTileKeys;  // Tiles already captured for current operation
 
     Document() = default;
     Document(u32 w, u32 h, const std::string& n = "Untitled");
@@ -209,6 +217,52 @@ public:
     void notifyLayerChanged(i32 index);
     void notifyActiveLayerChanged(i32 index);
     void notifySelectionChanged();
+
+    // Undo/Redo operations
+
+    // Begin a pixel edit operation (call before modifying pixels)
+    void beginPixelUndo(const std::string& name, i32 layerIndex);
+
+    // Capture a tile before modifying it (call for each tile that will be modified)
+    // Safe to call multiple times for the same tile - only captures once
+    void captureOriginalTile(i32 layerIndex, u64 tileKey);
+
+    // Capture tiles in a rect (convenience method)
+    void captureOriginalTilesInRect(i32 layerIndex, const Recti& bounds);
+
+    // Commit the pending undo step (call after operation is complete)
+    void commitUndo();
+
+    // Cancel the pending undo step without recording it
+    void cancelUndo();
+
+    // Record a layer add operation for undo
+    void recordLayerAdd(i32 index);
+
+    // Record a layer remove operation for undo (captures the layer before removal)
+    void recordLayerRemove(i32 index);
+
+    // Record a selection change for undo
+    void recordSelectionChange(const std::string& name);
+
+    // Execute undo
+    void undo();
+
+    // Execute redo
+    void redo();
+
+    // Check if undo/redo is available
+    bool canUndo() const { return undoHistory.canUndo(); }
+    bool canRedo() const { return undoHistory.canRedo(); }
+
+    // Get names for menu display
+    std::string getUndoMenuText() const;
+    std::string getRedoMenuText() const;
+
+private:
+    // Internal layer operations that don't record undo
+    void removeLayerInternal(i32 index);
+    void insertLayerInternal(i32 index, std::unique_ptr<LayerBase> layer);
 };
 
 #endif
