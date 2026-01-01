@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <title>PixelPlacer</title>
     <style>
         * {
@@ -17,6 +17,13 @@
             overflow: hidden;
             background: #1a1a1a;
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            /* Prevent touch behaviors on iOS/iPad */
+            touch-action: none;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+            /* Prevent pull-to-refresh and overscroll */
+            overscroll-behavior: none;
         }
 
         #canvas-container {
@@ -31,6 +38,8 @@
             display: block;
             image-rendering: pixelated;
             image-rendering: crisp-edges;
+            /* Prevent touch behaviors */
+            touch-action: none;
         }
 
         /* Loading screen */
@@ -212,6 +221,93 @@
         canvas.addEventListener('contextmenu', (e) => {
             e.preventDefault();
         });
+
+        // Touch events - map to mouse events with pressure support
+        let activeTouchId = null;
+
+        canvas.addEventListener('touchstart', (e) => {
+            if (!wasmReady) return;
+            e.preventDefault();
+
+            // Only track the first touch
+            if (activeTouchId !== null) return;
+
+            const touch = e.changedTouches[0];
+            activeTouchId = touch.identifier;
+
+            const rect = canvas.getBoundingClientRect();
+            const x = Math.round((touch.clientX - rect.left) * currentDpr);
+            const y = Math.round((touch.clientY - rect.top) * currentDpr);
+
+            // Get pressure (force) - ranges from 0 to 1, default to 0.5 if not supported
+            let pressure = 0.5;
+            if (touch.force !== undefined && touch.force > 0) {
+                pressure = touch.force;
+            }
+
+            Module._wasm_push_touch_event(0, x, y, pressure);
+        }, { passive: false });
+
+        canvas.addEventListener('touchmove', (e) => {
+            if (!wasmReady) return;
+            e.preventDefault();
+
+            // Find our tracked touch
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                const touch = e.changedTouches[i];
+                if (touch.identifier === activeTouchId) {
+                    const rect = canvas.getBoundingClientRect();
+                    const x = Math.round((touch.clientX - rect.left) * currentDpr);
+                    const y = Math.round((touch.clientY - rect.top) * currentDpr);
+
+                    let pressure = 0.5;
+                    if (touch.force !== undefined && touch.force > 0) {
+                        pressure = touch.force;
+                    }
+
+                    Module._wasm_push_touch_event(2, x, y, pressure);
+                    break;
+                }
+            }
+        }, { passive: false });
+
+        canvas.addEventListener('touchend', (e) => {
+            if (!wasmReady) return;
+            e.preventDefault();
+
+            // Find our tracked touch
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                const touch = e.changedTouches[i];
+                if (touch.identifier === activeTouchId) {
+                    const rect = canvas.getBoundingClientRect();
+                    const x = Math.round((touch.clientX - rect.left) * currentDpr);
+                    const y = Math.round((touch.clientY - rect.top) * currentDpr);
+
+                    Module._wasm_push_touch_event(1, x, y, 0);
+                    activeTouchId = null;
+                    break;
+                }
+            }
+        }, { passive: false });
+
+        canvas.addEventListener('touchcancel', (e) => {
+            if (!wasmReady) return;
+            e.preventDefault();
+
+            // Treat cancel as touch end
+            for (let i = 0; i < e.changedTouches.length; i++) {
+                const touch = e.changedTouches[i];
+                if (touch.identifier === activeTouchId) {
+                    const rect = canvas.getBoundingClientRect();
+                    const x = Math.round((touch.clientX - rect.left) * currentDpr);
+                    const y = Math.round((touch.clientY - rect.top) * currentDpr);
+
+                    Module._wasm_push_touch_event(1, x, y, 0);
+                    activeTouchId = null;
+                    break;
+                }
+            }
+        }, { passive: false });
 
         // Keyboard events
         canvas.addEventListener('keydown', (e) => {

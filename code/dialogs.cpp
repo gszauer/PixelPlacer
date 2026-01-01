@@ -208,7 +208,7 @@ bool AnchorGridWidget::onMouseDown(const MouseEvent& e) {
 // CanvasSizeDialog
 
 CanvasSizeDialog::CanvasSizeDialog() : Dialog("Canvas Size") {
-    preferredSize = Vec2(200 * Config::uiScale, 220 * Config::uiScale);
+    preferredSize = Vec2(220 * Config::uiScale, 260 * Config::uiScale);
 
     auto layout = createChild<VBoxLayout>(6 * Config::uiScale);
 
@@ -241,6 +241,18 @@ CanvasSizeDialog::CanvasSizeDialog() : Dialog("Canvas Size") {
     heightField->horizontalPolicy = SizePolicy::Fixed;
     heightRow->createChild<Label>("px")->preferredSize = Vec2(18 * Config::uiScale, 22 * Config::uiScale);
 
+    // Resize mode row
+    auto resizeRow = layout->createChild<HBoxLayout>(6 * Config::uiScale);
+    resizeRow->preferredSize = Vec2(0, 26 * Config::uiScale);
+    resizeRow->createChild<Label>("Resize:")->preferredSize = Vec2(55 * Config::uiScale, 22 * Config::uiScale);
+    resizeModeCombo = resizeRow->createChild<ComboBox>();
+    resizeModeCombo->addItem("Crop");
+    resizeModeCombo->addItem("Scale (Bilinear)");
+    resizeModeCombo->addItem("Scale (Step)");
+    resizeModeCombo->selectedIndex = 0;
+    resizeModeCombo->preferredSize = Vec2(130 * Config::uiScale, 22 * Config::uiScale);
+    resizeModeCombo->horizontalPolicy = SizePolicy::Fixed;
+
     // Anchor section below size fields
     auto anchorRow = layout->createChild<HBoxLayout>(6 * Config::uiScale);
     anchorRow->preferredSize = Vec2(0, 56 * Config::uiScale);
@@ -272,8 +284,15 @@ CanvasSizeDialog::CanvasSizeDialog() : Dialog("Canvas Size") {
     okBtn->onClick = [this]() {
         newWidth = std::atoi(widthField->text.c_str());
         newHeight = std::atoi(heightField->text.c_str());
+        // Map combo index to resize mode
+        switch (resizeModeCombo->selectedIndex) {
+            case 0: resizeMode = CanvasResizeMode::Crop; break;
+            case 1: resizeMode = CanvasResizeMode::ScaleBilinear; break;
+            case 2: resizeMode = CanvasResizeMode::ScaleNearest; break;
+            default: resizeMode = CanvasResizeMode::Crop; break;
+        }
         if (newWidth > 0 && newHeight > 0 && onConfirm) {
-            onConfirm(newWidth, newHeight, anchorGrid->selectedX, anchorGrid->selectedY);
+            onConfirm(newWidth, newHeight, anchorGrid->selectedX, anchorGrid->selectedY, resizeMode);
         }
         hide();
     };

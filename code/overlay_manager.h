@@ -12,6 +12,7 @@ namespace ZOrder {
     constexpr i32 DROPDOWN = 0;       // ComboBox dropdowns
     constexpr i32 POPUP_MENU = 10;    // PopupMenus
     constexpr i32 MODAL_DIALOG = 100; // Modal dialogs
+    constexpr i32 MODAL_DROPDOWN = 110; // Dropdowns inside modal dialogs
 }
 
 // Manages rendering and event routing for overlay widgets (popups, dropdowns, dialogs)

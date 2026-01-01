@@ -8,6 +8,9 @@
 // Global window instance for JavaScript callbacks
 WasmWindow* g_wasmWindow = nullptr;
 
+// Global pressure value for touch/pen input
+f32 g_wasmPressure = 1.0f;
+
 WasmWindow::WasmWindow() = default;
 
 WasmWindow::~WasmWindow() {
@@ -388,6 +391,30 @@ void wasm_push_mouse_event(i32 type, i32 x, i32 y, i32 button, i32 mods) {
     event.y = y;
     event.button = button;
     event.mods = mods;
+
+    switch (type) {
+        case 0: event.type = WasmEventType::MouseDown; break;
+        case 1: event.type = WasmEventType::MouseUp; break;
+        case 2: event.type = WasmEventType::MouseMove; break;
+        default: return;
+    }
+
+    g_wasmWindow->pushEvent(event);
+}
+
+EMSCRIPTEN_KEEPALIVE
+void wasm_push_touch_event(i32 type, i32 x, i32 y, f32 pressure) {
+    if (!g_wasmWindow) return;
+
+    // Update global pressure for the application to read
+    g_wasmPressure = pressure;
+
+    WasmEvent event;
+    event.x = x;
+    event.y = y;
+    event.button = 1;  // Left mouse button for touch
+    event.mods = 0;
+    event.pressure = pressure;
 
     switch (type) {
         case 0: event.type = WasmEventType::MouseDown; break;

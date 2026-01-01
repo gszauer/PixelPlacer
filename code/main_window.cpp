@@ -1,5 +1,10 @@
 #include "main_window.h"
 
+#ifdef __EMSCRIPTEN__
+// Access global pressure from WASM touch events
+extern f32 g_wasmPressure;
+#endif
+
 // ============================================================================
 // DocumentViewWidget implementation
 // ============================================================================
@@ -291,7 +296,11 @@ bool DocumentViewWidget::onMouseDown(const MouseEvent& e) {
 
         ToolEvent te;
         te.position = docPos;
+#ifdef __EMSCRIPTEN__
+        te.pressure = g_wasmPressure;  // Use touch pressure from JavaScript
+#else
         te.pressure = 1.0f;
+#endif
         te.zoom = view.zoom;
         te.shiftHeld = e.mods.shift;
         te.ctrlHeld = e.mods.ctrl;
@@ -391,7 +400,11 @@ bool DocumentViewWidget::onMouseDrag(const MouseEvent& e) {
 
         ToolEvent te;
         te.position = docPos;
+#ifdef __EMSCRIPTEN__
+        te.pressure = g_wasmPressure;  // Use touch pressure from JavaScript
+#else
         te.pressure = 1.0f;
+#endif
         te.zoom = view.zoom;
         te.shiftHeld = e.mods.shift;
         te.ctrlHeld = e.mods.ctrl;
@@ -2574,10 +2587,10 @@ void MainWindow::createDialogs() {
 
     // Canvas size dialog
     canvasSizeDialog = createChild<CanvasSizeDialog>();
-    canvasSizeDialog->onConfirm = [this](u32 width, u32 height, i32 anchorX, i32 anchorY) {
+    canvasSizeDialog->onConfirm = [this](u32 width, u32 height, i32 anchorX, i32 anchorY, CanvasResizeMode mode) {
         Document* doc = getAppState().activeDocument;
         if (doc) {
-            doc->resizeCanvas(width, height, anchorX, anchorY);
+            doc->resizeCanvas(width, height, anchorX, anchorY, mode);
             // Fit to screen after resize
             if (docView) {
                 docView->view.zoomToFit();

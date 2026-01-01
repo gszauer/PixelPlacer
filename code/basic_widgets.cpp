@@ -1875,7 +1875,12 @@ void ComboBox::showDropdown() {
     dropdownOverlay->hoveredIndex = -1;
     expanded = true;
 
-    OverlayManager::instance().registerOverlay(dropdownOverlay.get(), ZOrder::DROPDOWN,
+    // Use higher z-order if there's a modal dialog visible (we're inside it)
+    i32 zOrder = OverlayManager::instance().hasBlockingModal()
+        ? ZOrder::MODAL_DROPDOWN
+        : ZOrder::DROPDOWN;
+
+    OverlayManager::instance().registerOverlay(dropdownOverlay.get(), zOrder,
         [this]() { hideDropdown(); });
 
     getAppState().needsRedraw = true;

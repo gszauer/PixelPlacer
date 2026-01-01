@@ -6,6 +6,7 @@
 #include "basic_widgets.h"
 #include "overlay_manager.h"
 #include "config.h"
+#include "document.h"  // For CanvasResizeMode
 #include <functional>
 
 // Base dialog class
@@ -56,10 +57,12 @@ public:
     TextField* widthField = nullptr;
     TextField* heightField = nullptr;
     AnchorGridWidget* anchorGrid = nullptr;
+    ComboBox* resizeModeCombo = nullptr;
     u32 newWidth = 1920;
     u32 newHeight = 1080;
+    CanvasResizeMode resizeMode = CanvasResizeMode::Crop;
 
-    std::function<void(u32, u32, i32, i32)> onConfirm;  // width, height, anchorX, anchorY
+    std::function<void(u32, u32, i32, i32, CanvasResizeMode)> onConfirm;  // width, height, anchorX, anchorY, mode
 
     CanvasSizeDialog();
     void show() override;

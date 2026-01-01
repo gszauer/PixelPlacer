@@ -26,6 +26,7 @@ struct WasmEvent {
     i32 scanCode;
     i32 mods;
     i32 wheelDelta;
+    f32 pressure = 1.0f;  // Touch/pen pressure (0-1)
     bool repeat;
     std::string text;  // For text input and file drop
 };
@@ -89,9 +90,13 @@ private:
 // Global window instance for JavaScript callbacks
 extern WasmWindow* g_wasmWindow;
 
+// Global pressure value for touch/pen input (set by JS, read by application)
+extern f32 g_wasmPressure;
+
 // C functions exported to JavaScript for event handling
 extern "C" {
     void wasm_push_mouse_event(i32 type, i32 x, i32 y, i32 button, i32 mods);
+    void wasm_push_touch_event(i32 type, i32 x, i32 y, f32 pressure);
     void wasm_push_key_event(i32 type, i32 keyCode, i32 scanCode, i32 mods, i32 repeat);
     void wasm_push_resize_event(i32 width, i32 height);
     void wasm_push_text_input(const char* text);

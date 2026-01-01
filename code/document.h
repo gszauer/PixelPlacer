@@ -16,6 +16,13 @@
 class Tool;
 class DocumentObserver;
 
+// Resize mode for canvas size changes
+enum class CanvasResizeMode {
+    Crop,           // Crop/extend without scaling
+    ScaleBilinear,  // Scale with bilinear interpolation
+    ScaleNearest    // Scale with nearest neighbor (pixel-perfect)
+};
+
 // Tool event data
 enum class PointerType {
     Mouse,
@@ -161,7 +168,7 @@ public:
     void invertSelection();
 
     // Canvas operations
-    void resizeCanvas(u32 newWidth, u32 newHeight, i32 anchorX = 0, i32 anchorY = 0);
+    void resizeCanvas(u32 newWidth, u32 newHeight, i32 anchorX = 0, i32 anchorY = 0, CanvasResizeMode mode = CanvasResizeMode::Crop);
     void cropToSelection();
 
     // Edit operations (operate on active layer and selection)

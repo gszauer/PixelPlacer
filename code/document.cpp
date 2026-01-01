@@ -3,6 +3,7 @@
 #include "compositor.h"
 #include "app_state.h"
 #include "sampler.h"
+#include "dialogs.h"
 
 Document::Document(u32 w, u32 h, const std::string& n)
     : name(n), width(w), height(h), selection(w, h) {
@@ -600,7 +601,58 @@ void Document::invertSelection() {
     notifySelectionChanged();
 }
 
-void Document::resizeCanvas(u32 newWidth, u32 newHeight, i32 anchorX, i32 anchorY) {
+void Document::resizeCanvas(u32 newWidth, u32 newHeight, i32 anchorX, i32 anchorY, CanvasResizeMode mode) {
+    // Handle scaling modes
+    if (mode == CanvasResizeMode::ScaleBilinear || mode == CanvasResizeMode::ScaleNearest) {
+        f32 scaleX = static_cast<f32>(newWidth) / static_cast<f32>(width);
+        f32 scaleY = static_cast<f32>(newHeight) / static_cast<f32>(height);
+
+        for (auto& layer : layers) {
+            if (layer->isPixelLayer()) {
+                PixelLayer* pixelLayer = static_cast<PixelLayer*>(layer.get());
+                TiledCanvas newCanvas(newWidth, newHeight);
+
+                // Scale using sampler
+                for (u32 y = 0; y < newHeight; ++y) {
+                    for (u32 x = 0; x < newWidth; ++x) {
+                        // Map destination to source coordinates
+                        f32 srcX = (static_cast<f32>(x) + 0.5f) / scaleX - 0.5f;
+                        f32 srcY = (static_cast<f32>(y) + 0.5f) / scaleY - 0.5f;
+
+                        u32 pixel;
+                        if (mode == CanvasResizeMode::ScaleBilinear) {
+                            pixel = Sampler::sampleBilinear(pixelLayer->canvas, srcX, srcY);
+                        } else {
+                            pixel = Sampler::sampleNearest(pixelLayer->canvas, srcX, srcY);
+                        }
+
+                        if (pixel != 0) {
+                            newCanvas.setPixel(x, y, pixel);
+                        }
+                    }
+                }
+
+                pixelLayer->canvas = std::move(newCanvas);
+            }
+            else if (layer->isTextLayer()) {
+                // Scale text layer transform (position and scale), not font size
+                layer->transform.position.x *= scaleX;
+                layer->transform.position.y *= scaleY;
+                layer->transform.scale.x *= scaleX;
+                layer->transform.scale.y *= scaleY;
+            }
+            // Adjustment layers don't need any changes
+        }
+
+        width = newWidth;
+        height = newHeight;
+        selection.resize(newWidth, newHeight);
+
+        notifyChanged(Rect(0, 0, newWidth, newHeight));
+        return;
+    }
+
+    // Crop mode (original behavior)
     // anchorX/Y: -1 = left/top, 0 = center, 1 = right/bottom
     // Calculate offset for existing content
     i32 offsetX = 0;
