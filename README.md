@@ -1,42 +1,20 @@
 # PixelPlacer
 
-A raster graphics editor built in minimal C++ with automatic memory management. Runs natively on Linux and in the browser via WebAssembly.
-
 ![Screenshot](screenshots/screenshot.png)
 
 Built with Claude Code Opus 4.5. I never read or reviewed any of this code.
 
-## Key Features
+## Linux
 
-- Software rasterizer
-- Sparse tile-based canvas
-- Multi layer document model with blend modes
-- Non destructive adjustment layers
-- Text layers with embedded font support
-- Custom brush tips with dynamics (jitter, scatter)
-- Pressure-sensitive tablet support
-- Selection tools with anti-aliasing and feathering
-- Photoshop-style stroke buffer for brush opacity
-- HiDPI/Retina display support with runtime UI scaling
-
-## Building and Running
-
-### Prerequisites
+**Prerequisites**
 
 - g++ with C++17 support
 - X11 development libraries
 
-On Debian/Ubuntu:
 ```bash
 sudo apt install build-essential libx11-dev
 ```
-
-On Fedora:
-```bash
-sudo dnf install gcc-c++ libX11-devel
-```
-
-### Build Commands
+**Build Commands**
 
 Release build (optimized):
 ```bash
@@ -50,13 +28,47 @@ Debug build (with symbols, no optimization):
 ./pixelplacer_debug
 ```
 
+## Windows
+
+**Prerequisites**
+
+- Visual Studio 2019 or later with "Desktop development with C++" workload
+- Use "x64 Native Tools Command Prompt for VS 2022" (or VS 2019)
+
+**Build Commands**
+
+From the x64 Native Tools Command Prompt (MSVC) or regular Command Prompt (MinGW):
+```cmd
+build_windows.bat
+pixelplacer.exe
+```
+
+Debug build:
+```cmd
+build_windows.bat debug
+pixelplacer_debug.exe
+```
+
+### Cross-Compiling from Linux
+
+You can build the Windows executable on Linux using MinGW-w64:
+
+```bash
+# Install cross-compiler
+sudo apt install mingw-w64        # Ubuntu/Debian
+sudo dnf install mingw64-gcc-c++  # Fedora
+sudo pacman -S mingw-w64-gcc      # Arch
+
+# Build
+./build_windows_cross.sh
+# Creates: pixelplacer.exe (statically linked, runs on Windows without dependencies)
+```
+
 ## Web Version (WebAssembly)
 
-PixelPlacer runs in modern browsers via WebAssembly. The entire application compiles to WASM with no feature loss.
+**Prerequisites**
 
-### Building for Web
-
-Requires the [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html):
+- [Emscripten SDK](https://emscripten.org/docs/getting_started/downloads.html):
 
 ```bash
 # Install and activate Emscripten (one-time setup)
@@ -65,8 +77,11 @@ cd emsdk
 ./emsdk install latest
 ./emsdk activate latest
 source ./emsdk_env.sh
+```
 
-# Build PixelPlacer for web
+**Build Commands**
+
+```
 ./build_wasm.sh
 ```
 
@@ -75,32 +90,9 @@ This creates a `www/` folder with:
 - `pixelplacer.js` - JavaScript glue code (generated)
 - `pixelplacer.wasm` - compiled application
 
-### Testing Locally
-
-```bash
-cd www
-python3 -m http.server 8080
-# Open http://localhost:8080
-```
-
-### Browser Requirements
-
-- Chrome 57+, Firefox 52+, Safari 11+, Edge 16+ (any browser with WebAssembly support)
-- File open/save works via browser dialogs (File > Open, File > Save trigger downloads)
-- Drag and drop files onto the canvas to open them
-- Clipboard operations require HTTPS in production
-
-### Deploying
-
-Copy the contents of `www/` to any static web host. No server-side code required.
-
----
-
 ### Unity Build
 
-This project uses a unity build pattern where all source files are compiled as a single translation unit. The `main.cpp` file includes all other `.cpp` files when `UNITY_BUILD` is defined. This means you only compile one file, the compiler sees all the code at once, and it can optimize across file boundaries. The downside is any change recompiles everything, but for a project this size that's fine.
-
----
+This project uses a unity build pattern where all source files are compiled as a single translation unit. The `main.cpp` file includes all other `.cpp` files when `UNITY_BUILD` is defined. 
 
 ## Architecture Overview
 
@@ -113,17 +105,16 @@ This project uses a unity build pattern where all source files are compiled as a
          v                        v                        v
 +------------------+     +------------------+     +------------------+
 |  PlatformWindow  |     |    Tool Palette  |     |     Document     |
-| (X11 or WASM)    |     |    Menu Bar      |     |     (layers)     |
+|   (abstract)     |     |    Menu Bar      |     |     (layers)     |
 +------------------+     |    Panels        |     +------------------+
          |               +------------------+              |
          v                                                 v
 +------------------+                              +------------------+
 | X11Window (Linux)|                              |   TiledCanvas    |
-| WasmWindow (Web) |                              |   (sparse tiles) |
-+------------------+                              +------------------+
+| Win32Window (Win)|                              |   (sparse tiles) |
+| WasmWindow (Web) |                              +------------------+
++------------------+
 ```
-
----
 
 ## How the Application Runs
 
@@ -132,8 +123,6 @@ When you launch PixelPlacer, the `Application` class takes over. It creates a pl
 The `Application` class owns everything. It holds the `PlatformWindow`, the `MainWindow` (which is the root widget), and manages the list of open documents. When you create a new document or open a file, Application creates a `Document` object and hands it to the UI. When you close the last document, the app keeps running with an empty canvas area.
 
 All rendering is done in software. The framebuffer is just a chunk of memory containing RGBA pixels. The compositor draws each layer of the document into this buffer, the UI widgets draw themselves on top, and then the whole thing gets pushed to X11 via shared memory for display.
-
----
 
 ## How the Widget System Works
 
@@ -176,8 +165,6 @@ All drawing goes through `Primitives`, which provides functions like `fillRect()
 
 The color scheme comes from `config.h`, which defines an Adobe Spectrum-inspired dark theme. All the grays, blues, and semantic colors (button, hover, pressed, etc.) are defined there.
 
----
-
 ## How Documents Work
 
 A `Document` represents an open image. It has a width, height, and a stack of layers. Every document has at least one layer, and there's always an "active" layer that tools draw on.
@@ -208,8 +195,6 @@ When something changes in a document (layer added, selection changed, pixels mod
 
 This keeps the document model clean. It doesn't know anything about UI - it just broadcasts "something changed" and the UI figures out how to respond.
 
----
-
 ## How the Canvas System Works
 
 The canvas is where the actual pixels live. Rather than allocating a giant 2D array for the entire document dimensions, we use a sparse tile system.
@@ -232,8 +217,6 @@ Tile* tile = canvas.getTile(tileX, tileY);  // might create the tile
 ```
 
 There's also a bounds-tracking feature. The canvas remembers the bounding box of all non-empty tiles, which is useful for saving (don't write empty tiles to disk) and compositing (only composite the used region).
-
----
 
 ## How the Compositor Works
 
@@ -259,8 +242,6 @@ This is solved with a stroke buffer. Instead of painting directly to the layer:
 3. Clear the buffer for the next stroke
 
 This matches Photoshop's behavior and is essential for natural-looking brushwork.
-
----
 
 ## How Tools Work
 
@@ -305,8 +286,6 @@ Selections support operations: Replace (overwrite), Add (union), Subtract (diffe
 
 Transform tools modify geometry. The crop tool lets you define a region and discard everything outside it. It actually resizes the canvas and shifts all layer content. The gradient tool fills the selection (or entire layer) with a color gradient.
 
----
-
 ## How the Menu System Works
 
 The menu bar is part of the window decorations - it's drawn by PixelPlacer, not the OS. This gives us full control over styling.
@@ -320,8 +299,6 @@ When you click a menu bar item:
 Each menu item is a button inside the popup. Clicking it triggers its action callback and closes the menu. Some items open sub-menus (like Edit > ...), which are just nested popups.
 
 The menu bar also handles the window control buttons (minimize, maximize, close) since we're using a custom titlebar. These are positioned on the right side and interact with the X11 window manager.
-
----
 
 ## How Dialogs Work
 
@@ -340,8 +317,6 @@ On Linux, file open/save dialogs use the system's native dialogs via zenity or k
 
 On the web, file dialogs work through the browser. Opening a file triggers a hidden `<input type="file">` click, and the selected file's data is passed to WASM memory. Saving triggers a download via a Blob URL. The `platform_wasm.cpp` handles all this with JavaScript interop.
 
----
-
 ## How Selections Work
 
 Selections are stored as an alpha mask - a grayscale image where white means fully selected, black means not selected, and gray means partially selected (feathered edges).
@@ -359,8 +334,6 @@ The selection affects:
 
 Marching ants are drawn by the document view. It finds the contour of the selection mask and animates a dashed line along it.
 
----
-
 ## Memory and Resource Management
 
 The codebase uses modern C++ memory management:
@@ -370,8 +343,6 @@ The codebase uses modern C++ memory management:
 **Raw pointers for references**: If something needs a reference to another object but doesn't own it, we use a raw pointer. For example, widgets have a `parent` pointer but don't own their parent. This is safe because the parent always outlives the child (the parent owns the child, so it won't be destroyed while children exist).
 
 **No shared_ptr**: The ownership graph is strictly a tree. Nothing has shared ownership. This keeps things simple and avoids cycles.
-
----
 
 ## File Organization Quick Reference
 
@@ -388,11 +359,9 @@ The codebase uses modern C++ memory management:
 | Other tools | `tool.h/cpp`, `eraser_tool.h/cpp`, `fill_tool.h/cpp`, `selection_tools.h/cpp`, `transform_tools.h/cpp`, `retouch_tools.h/cpp` |
 | Widget system | `widget.h/cpp`, `basic_widgets.h/cpp`, `layouts.h/cpp` |
 | UI panels | `panels.h/cpp`, `dialogs.h/cpp`, `main_window.h/cpp`, `overlay_manager.h/cpp` |
-| Platform layer | `platform_window.h`, `platform.h`, `platform_linux.cpp`, `x11_window.h/cpp`, `platform_wasm.cpp`, `wasm_window.h/cpp`, `shell.html` |
+| Platform layer | `platform_window.h`, `platform.h`, `platform_linux.cpp`, `x11_window.h/cpp`, `platform_windows.cpp`, `win32_window.h/cpp`, `platform_wasm.cpp`, `wasm_window.h/cpp`, `shell.html` |
 | File I/O | `image_io.h/cpp`, `project_file.h/cpp` |
 | Fonts | `inter_font.cpp`, `material_font.cpp` |
-
----
 
 ## Adding New Features
 
@@ -435,8 +404,6 @@ The codebase uses modern C++ memory management:
 2. Override `rebuildContent()` to create child widgets
 3. Connect to document observer if it needs to react to changes
 4. Add to right sidebar in `MainWindow` constructor
-
----
 
 ## Configuration
 

@@ -10,6 +10,10 @@ This file contains instructions for AI agents (Claude Code, Cursor, etc.) workin
 ./build_linux.sh        # Release build -> ./pixelplacer
 ./build_linux.sh debug  # Debug build -> ./pixelplacer_debug
 
+# Windows native build (from Windows cmd or cross-compile from Linux)
+build_windows.bat              # On Windows -> pixelplacer.exe
+./build_windows_cross.sh       # Cross-compile on Linux -> pixelplacer.exe
+
 # WebAssembly build (requires Emscripten SDK)
 ./build_wasm.sh         # Release build -> www/index.html
 ./build_wasm.sh debug   # Debug build -> www/index.html
@@ -24,6 +28,7 @@ cd www && python3 -m http.server 8080
 - Headers: `code/*.h`
 - Implementations: `code/*.cpp`
 - Linux build output: `pixelplacer`, `pixelplacer_debug` (in root)
+- Windows build output: `pixelplacer.exe`, `pixelplacer_debug.exe` (in root)
 - WASM build output: `www/` (transient, contains index.html, pixelplacer.js, pixelplacer.wasm)
 
 ### Most Frequently Modified Files
@@ -36,6 +41,7 @@ cd www && python3 -m http.server 8080
 | Configuration | `code/config.h` |
 | Application lifecycle | `code/application.cpp` |
 | Linux platform | `code/platform_linux.cpp`, `code/x11_window.cpp` |
+| Windows platform | `code/platform_windows.cpp`, `code/win32_window.cpp` |
 | WASM platform | `code/platform_wasm.cpp`, `code/wasm_window.cpp`, `code/shell.html` |
 
 ---
@@ -402,7 +408,7 @@ menu->addItem("Action", "", [this]() {
 
 ## Platform-Specific Code
 
-The application supports two platforms: Linux (X11) and WebAssembly (browser).
+The application supports three platforms: Linux (X11), Windows (Win32/GDI), and WebAssembly (browser).
 
 ### Platform Abstraction
 
@@ -412,13 +418,16 @@ The application supports two platforms: Linux (X11) and WebAssembly (browser).
 
 ### Writing Platform-Specific Code
 
-Use `#ifdef __EMSCRIPTEN__` for WASM-specific code:
+Use preprocessor checks for platform-specific code:
 
 ```cpp
 #ifdef __EMSCRIPTEN__
     // WASM-specific: use memory-based file loading
     std::vector<u8> fileData = Platform::readFile(path);
     data = stbi_load_from_memory(fileData.data(), fileData.size(), &w, &h, &channels, 4);
+#elif defined(_WIN32)
+    // Windows-specific code here
+    data = stbi_load(path.c_str(), &w, &h, &channels, 4);
 #else
     // Linux: direct filesystem access
     data = stbi_load(path.c_str(), &w, &h, &channels, 4);
@@ -440,8 +449,9 @@ Use `#ifdef __EMSCRIPTEN__` for WASM-specific code:
 ### Adding Platform-Specific Features
 
 1. Add function declaration to `code/platform.h`
-2. Implement in both `code/platform_linux.cpp` and `code/platform_wasm.cpp`
+2. Implement in all platform files: `code/platform_linux.cpp`, `code/platform_windows.cpp`, and `code/platform_wasm.cpp`
 3. For WASM, may need JavaScript interop via `EM_ASM` or exported functions
+4. For Windows, use Win32 APIs (file dialogs via GetOpenFileName, clipboard via OpenClipboard, etc.)
 
 ---
 
@@ -449,7 +459,7 @@ Use `#ifdef __EMSCRIPTEN__` for WASM-specific code:
 
 ### Event Flow
 ```
-X11 Event -> PlatformWindow callback -> Application handler
+Platform Event (X11/Win32/Browser) -> PlatformWindow callback -> Application handler
     -> OverlayManager (popups/dialogs)
     -> Widget tree (findWidgetAt + bubble up)
     -> Tool (if on canvas)
