@@ -55,8 +55,10 @@ BrushStamp generateStamp(f32 diameter, f32 hardness) {
                 alpha = 1.0f;
             } else if (dist < radius) {
                 // Smooth falloff in the soft region
+                // Use (1-t)² for proper soft gradient that fades from center
                 f32 t = (dist - hardnessRadius) / softRadius;
-                alpha = 1.0f - t * t;  // Quadratic falloff
+                f32 invT = 1.0f - t;
+                alpha = invT * invT;  // Quadratic falloff from center
             }
 
             stamp.setAlpha(x, y, alpha);
